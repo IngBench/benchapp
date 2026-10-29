@@ -1,27 +1,44 @@
 import { useState, useEffect } from 'react';
+import { collection, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { Obra, ModeloHerreria, Material } from '../types';
 
 export default function DestajosTaller() {
-    const [obras, setObras] = useState<Obra[]>(() => JSON.parse(localStorage.getItem('bench_obras') || '[]'));
+    // OBRAS AHORA VIENEN DE LA NUBE EN TIEMPO REAL
+    const [obras, setObras] = useState<Obra[]>([]);
+    
+    // Mantenemos modelos y materiales en localStorage temporalmente
     const [modelos] = useState<ModeloHerreria[]>(() => JSON.parse(localStorage.getItem('bench_modelos') || '[]'));
     const [materiales] = useState<Material[]>(() => JSON.parse(localStorage.getItem('bench_materiales') || '[]'));
 
     const [obraActivaId, setObraActivaId] = useState<string>('');
 
-    useEffect(() => { localStorage.setItem('bench_obras', JSON.stringify(obras)); }, [obras]);
+    // VIGILANTE DE FIREBASE: Sincroniza expedientes de obra en tiempo real
+    useEffect(() => {
+        const desuscribir = onSnapshot(collection(db, 'obras'), (snapshot) => {
+            const obrasData = snapshot.docs.map(doc => doc.data() as Obra);
+            setObras(obrasData);
+        });
+        return () => desuscribir();
+    }, []);
 
     const obraActiva = obras.find(o => o.id === obraActivaId);
 
-    // Función genérica para actualizar cantidades de taller o de pago
-    const actualizarAvance = (elementoId: string, campo: 'cantFabricacion' | 'cantTerminados' | 'cantInstalados' | 'cantPagados', valor: number) => {
+    // FUNCIÓN MIGRADA A NUBE: Actualizar avances de taller y pagos
+    const actualizarAvance = async (elementoId: string, campo: 'cantFabricacion' | 'cantTerminados' | 'cantInstalados' | 'cantPagados', valor: number) => {
         if (!obraActiva) return;
-        const obraActualizada = {
-            ...obraActiva,
-            elementos: obraActiva.elementos.map(el =>
-                el.id === elementoId ? { ...el, [campo]: valor >= 0 ? valor : 0 } : el
-            )
-        };
-        setObras(obras.map(o => o.id === obraActiva.id ? obraActualizada : o));
+        
+        const elementosActualizados = obraActiva.elementos.map(el =>
+            el.id === elementoId ? { ...el, [campo]: valor >= 0 ? valor : 0 } : el
+        );
+
+        try {
+            await updateDoc(doc(db, 'obras', obraActiva.id), {
+                elementos: elementosActualizados
+            });
+        } catch (error) {
+            console.error("Error al actualizar avance de taller en la nube:", error);
+        }
     };
 
     // Cálculos globales de la obra seleccionada

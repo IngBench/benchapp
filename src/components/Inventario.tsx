@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
+import { collection, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { Obra, Material, ModeloHerreria, CompraMaterial } from '../types';
 
 export default function Inventario() {
-    const [obras, setObras] = useState<Obra[]>(() => JSON.parse(localStorage.getItem('bench_obras') || '[]'));
+    // OBRAS AHORA VIENEN DE LA NUBE EN TIEMPO REAL
+    const [obras, setObras] = useState<Obra[]>([]);
+    
+    // Mantenemos modelos y materiales en localStorage temporalmente hasta su migración completa
     const [materiales] = useState<Material[]>(() => JSON.parse(localStorage.getItem('bench_materiales') || '[]'));
     const [modelos] = useState<ModeloHerreria[]>(() => JSON.parse(localStorage.getItem('bench_modelos') || '[]'));
 
@@ -14,7 +19,14 @@ export default function Inventario() {
     const [cantidadCompra, setCantidadCompra] = useState('');
     const [partidasFactura, setPartidasFactura] = useState<{ materialId: string; cantidad: number }[]>([]);
 
-    useEffect(() => { localStorage.setItem('bench_obras', JSON.stringify(obras)); }, [obras]);
+    // VIGILANTE DE FIREBASE: Escucha los expedientes de obra en tiempo real
+    useEffect(() => {
+        const desuscribir = onSnapshot(collection(db, 'obras'), (snapshot) => {
+            const obrasData = snapshot.docs.map(doc => doc.data() as Obra);
+            setObras(obrasData);
+        });
+        return () => desuscribir();
+    }, []);
 
     const obraActiva = obras.find(o => o.id === obraActivaId);
 
@@ -42,15 +54,15 @@ export default function Inventario() {
         setPartidasFactura(partidasFactura.filter((_, i) => i !== index));
     };
 
-    // Función para detonar la entrada masiva al almacén
-    const guardarFacturaCompleta = () => {
+    // FUNCIÓN MIGRADA A NUBE: Detonar la entrada masiva al almacén
+    const guardarFacturaCompleta = async () => {
         if (!obraActivaId || !facturaActiva || partidasFactura.length === 0) {
             alert('Ingresa el folio de la factura y al menos una partida de material para afectar el inventario.');
             return;
         }
 
-        const obraIndex = obras.findIndex(o => o.id === obraActivaId);
-        if (obraIndex === -1) return;
+        const obraActual = obras.find(o => o.id === obraActivaId);
+        if (!obraActual) return;
 
         // Convertimos las partidas temporales en registros formales de compra
         const nuevasCompras: CompraMaterial[] = partidasFactura.map((partida, index) => ({
@@ -61,16 +73,21 @@ export default function Inventario() {
             fecha: new Date().toISOString().split('T')[0]
         }));
 
-        const obraActualizada = { ...obras[obraIndex] };
-        obraActualizada.compras = [...(obraActualizada.compras || []), ...nuevasCompras];
+        const comprasActualizadas = [...(obraActual.compras || []), ...nuevasCompras];
 
-        const nuevasObras = [...obras];
-        nuevasObras[obraIndex] = obraActualizada;
-        setObras(nuevasObras);
+        try {
+            // Actualización directa en Firestore
+            await updateDoc(doc(db, 'obras', obraActivaId), {
+                compras: comprasActualizadas
+            });
 
-        // Limpiar formulario para la siguiente captura
-        setFacturaActiva('');
-        setPartidasFactura([]);
+            // Limpiar formulario para la siguiente captura
+            setFacturaActiva('');
+            setPartidasFactura([]);
+        } catch (error) {
+            console.error("Error al registrar factura en la nube:", error);
+            alert("Hubo un error al sincronizar la compra con el servidor.");
+        }
     };
 
     return (

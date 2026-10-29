@@ -1,36 +1,49 @@
 import { useState, useEffect } from 'react';
+import { collection, doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { ModeloHerreria, Material, Presupuesto, PartidaPresupuesto, MaterialRequerido } from '../types';
 
 export default function Presupuestos() {
-    const [presupuestos, setPresupuestos] = useState<Presupuesto[]>(() => JSON.parse(localStorage.getItem('bench_presupuestos') || '[]'));
+    // PRESUPUESTOS AHORA VIENEN DE LA NUBE EN TIEMPO REAL
+    const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([]);
+    
+    // Mantenemos modelos y materiales en localStorage temporalmente para la integración
     const [modelos, setModelos] = useState<ModeloHerreria[]>(() => JSON.parse(localStorage.getItem('bench_modelos') || '[]'));
     const [materiales] = useState<Material[]>(() => JSON.parse(localStorage.getItem('bench_materiales') || '[]'));
 
     const [presupuestoActivo, setPresupuestoActivo] = useState<Presupuesto | null>(null);
-
     const [formCabecera, setFormCabecera] = useState({
-        promocion: '', desarrollo: '', ciudad: '', cliente: 'GRUPO SAN CARLOS',
+        promocion: "", desarrollo: "", ciudad: "", cliente: 'GRUPO SAN CARLOS',
         fecha: new Date().toISOString().split('T')[0]
     });
 
-    const [modeloSel, setModeloSel] = useState('');
-    const [codigo, setCodigo] = useState('');
-    const [descripcion, setDescripcion] = useState('');
+    const [modeloSel, setModeloSel] = useState("");
+    const [codigo, setCodigo] = useState("");
+    const [descripcion, setDescripcion] = useState("");
     const [cantidad, setCantidad] = useState('1');
     const [modulos, setModulos] = useState('1');
-    const [largo, setLargo] = useState('');
-    const [ancho, setAncho] = useState('');
+    const [largo, setLargo] = useState("");
+    const [ancho, setAncho] = useState("");
     const [tipoPintura, setTipoPintura] = useState<'Esmalte' | 'Electroestática' | 'Ninguna'>('Ninguna');
 
     const [mostrarAltaModelo, setMostrarAltaModelo] = useState(false);
-    const [nuevoModNombre, setNuevoModNombre] = useState('');
+    const [nuevoModNombre, setNuevoModNombre] = useState("");
     const [nuevoModReceta, setNuevoModReceta] = useState<MaterialRequerido[]>([]);
-    const [tempMatId, setTempMatId] = useState('');
-    const [tempMatCant, setTempMatCant] = useState('');
+    const [tempMatId, setTempMatId] = useState("");
+    const [tempMatCant, setTempMatCant] = useState("");
 
-    useEffect(() => { localStorage.setItem('bench_presupuestos', JSON.stringify(presupuestos)); }, [presupuestos]);
+    // VIGILANTE DE FIREBASE: Escucha cotizaciones en tiempo real
+    useEffect(() => {
+        const desuscribir = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
+            const presupuestosData = snapshot.docs.map(doc => doc.data() as Presupuesto);
+            setPresupuestos(presupuestosData);
+        });
+        return () => desuscribir();
+    }, []);
+
     useEffect(() => { localStorage.setItem('bench_modelos', JSON.stringify(modelos)); }, [modelos]);
 
+    // Mantener actualizado el presupuesto activo si hay cambios desde otra terminal
     useEffect(() => {
         if (presupuestoActivo) {
             const act = presupuestos.find(p => p.id === presupuestoActivo.id);
@@ -38,27 +51,34 @@ export default function Presupuestos() {
         }
     }, [presupuestos]);
 
-    const crearPresupuesto = (e: React.FormEvent) => {
+    // MIGRADO A NUBE: Crear nuevo presupuesto
+    const crearPresupuesto = async (e: React.FormEvent) => {
         e.preventDefault();
         const [anio, mes, dia] = formCabecera.fecha.split('-');
         const fechaFormateada = `${dia}/${mes}/${anio}`;
-
+        
+        const nuevoId = Date.now().toString();
         const nuevo: Presupuesto = {
-            id: Date.now().toString(),
-            fecha: fechaFormateada,
+            id: nuevoId,
             ...formCabecera,
+            fecha: fechaFormateada, // Se sobrescribe al final para asegurar el formato correcto (dd/mm/aaaa)
             partidas: [],
             preciosMateriales: [],
-            precioGlobalKg: 0 // Inicia en 0 para usar el promedio automático
+            precioGlobalKg: 0
         };
-        setPresupuestos([...presupuestos, nuevo]);
-        setFormCabecera({ promocion: '', desarrollo: '', ciudad: '', cliente: 'GRUPO SAN CARLOS', fecha: new Date().toISOString().split('T')[0] });
+
+        try {
+            await setDoc(doc(db, 'presupuestos', nuevoId), nuevo);
+            setFormCabecera({ promocion: "", desarrollo: "", ciudad: "", cliente: 'GRUPO SAN CARLOS', fecha: new Date().toISOString().split('T')[0] });
+        } catch (error) {
+            console.error("Error al crear presupuesto en la nube:", error);
+        }
     };
 
     const agregarInsumoAlNuevoModelo = () => {
         if (!tempMatId || !tempMatCant) return;
         setNuevoModReceta([...nuevoModReceta, { materialId: tempMatId, cantidadMetros: Number(tempMatCant) }]);
-        setTempMatId(''); setTempMatCant('');
+        setTempMatId(""); setTempMatCant("");
     };
 
     const guardarNuevoModelo = () => {
@@ -67,10 +87,11 @@ export default function Presupuestos() {
         setModelos([...modelos, nuevoModeloObj]);
         setModeloSel(nuevoModeloObj.id);
         setDescripcion(nuevoModeloObj.nombre);
-        setNuevoModNombre(''); setNuevoModReceta([]); setMostrarAltaModelo(false);
+        setNuevoModNombre(""); setNuevoModReceta([]); setMostrarAltaModelo(false);
     };
 
-    const agregarPartida = () => {
+    // MIGRADO A NUBE: Agregar partida al presupuesto activo
+    const agregarPartida = async () => {
         if (!presupuestoActivo || !modeloSel) return;
         const nuevaPartida: PartidaPresupuesto = {
             id: Date.now().toString(),
@@ -87,7 +108,7 @@ export default function Presupuestos() {
         const nuevasPartidas = [...presupuestoActivo.partidas, nuevaPartida];
         const mod = modelos.find(m => m.id === modeloSel);
         const nuevosPrecios = [...(presupuestoActivo.preciosMateriales || [])];
-
+        
         mod?.receta.forEach(req => {
             if (!nuevosPrecios.find(p => p.materialId === req.materialId)) {
                 nuevosPrecios.push({ materialId: req.materialId, precioTramo: 0 });
@@ -95,36 +116,55 @@ export default function Presupuestos() {
         });
 
         const act = { ...presupuestoActivo, partidas: nuevasPartidas, preciosMateriales: nuevosPrecios };
-        setPresupuestos(presupuestos.map(p => p.id === act.id ? act : p));
 
-        setModeloSel(''); setCodigo(''); setDescripcion(''); setCantidad('1');
-        setLargo(''); setAncho(''); setTipoPintura('Ninguna');
+        try {
+            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
+                partidas: act.partidas,
+                preciosMateriales: act.preciosMateriales
+            });
+
+            setModeloSel(""); setCodigo(""); setDescripcion(""); setCantidad('1');
+            setLargo(""); setAncho(""); setTipoPintura('Ninguna');
+        } catch (error) {
+            console.error("Error al agregar partida:", error);
+        }
     };
 
-    const eliminarPartida = (id: string) => {
+    // MIGRADO A NUBE: Eliminar partida
+    const eliminarPartida = async (id: string) => {
         if (!presupuestoActivo) return;
         const act = { ...presupuestoActivo, partidas: presupuestoActivo.partidas.filter(p => p.id !== id) };
-        setPresupuestos(presupuestos.map(p => p.id === act.id ? act : p));
+        try {
+            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { partidas: act.partidas });
+        } catch (error) {
+            console.error("Error al eliminar partida:", error);
+        }
     };
 
-    const actualizarPrecioMaterial = (materialId: string, precioTramo: number) => {
+    // MIGRADO A NUBE: Actualizar precio individual de material
+    const actualizarPrecioMaterial = async (materialId: string, precioTramo: number) => {
         if (!presupuestoActivo) return;
         const nuevosPrecios = presupuestoActivo.preciosMateriales.map(p =>
             p.materialId === materialId ? { ...p, precioTramo } : p
         );
-        const act = { ...presupuestoActivo, preciosMateriales: nuevosPrecios };
-        setPresupuestos(presupuestos.map(p => p.id === act.id ? act : p));
+        try {
+            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { preciosMateriales: nuevosPrecios });
+        } catch (error) {
+            console.error("Error actualizando precio de material:", error);
+        }
     };
 
-    const fijarPrecioGlobalKg = (nuevoPrecio: number) => {
+    // MIGRADO A NUBE: Fijar precio global por kilo
+    const fijarPrecioGlobalKg = async (nuevoPrecio: number) => {
         if (!presupuestoActivo) return;
-        const act = { ...presupuestoActivo, precioGlobalKg: nuevoPrecio };
-        setPresupuestos(presupuestos.map(p => p.id === act.id ? act : p));
+        try {
+            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { precioGlobalKg: nuevoPrecio });
+        } catch (error) {
+            console.error("Error actualizando precio global:", error);
+        }
     };
 
-    // ============================================================================
     // MOTOR FINANCIERO CON PRECIO GLOBAL Y PINTURA PRORRATEADA EN KG
-    // ============================================================================
     const calcularFinanzasPartida = (partida: PartidaPresupuesto, precioGlobalFijado?: number) => {
         const mod = modelos.find(m => m.id === partida.modeloId);
         let kgTotales = 0;
@@ -142,9 +182,8 @@ export default function Presupuestos() {
         });
 
         const costoMas10 = sumaCostoMaterialesBase * 1.10;
-        const costoMasIva = costoMas10 * 1.16;
-        const formulaTotalAcero = costoMasIva * 2.30;
-
+        const costoMasiva = costoMas10 * 1.16;
+        const formulaTotalAcero = costoMasiva * 2.30;
         const precioKgCalculado = kgTotales > 0 ? (formulaTotalAcero / kgTotales) : 0;
         const precioKgFinal = (precioGlobalFijado && precioGlobalFijado > 0) ? precioGlobalFijado : precioKgCalculado;
         const precioAceroVenta = kgTotales * precioKgFinal;
@@ -155,8 +194,6 @@ export default function Presupuestos() {
         else if (partida.tipoPintura === 'Electroestática') costoPintura = m2Pintura * 350.00;
 
         const precioUnitarioFinal = precioAceroVenta + costoPintura;
-
-        // NUEVO CÁLCULO: Precio por kilo real para el cliente (absorbiendo pintura)
         const precioKgCliente = kgTotales > 0 ? (precioUnitarioFinal / kgTotales) : 0;
 
         return { kgTotales, precioKgCalculado, precioKgFinal, precioKgCliente, m2Pintura, costoPintura, precioUnitarioFinal };
@@ -166,13 +203,12 @@ export default function Presupuestos() {
         if (!presupuestoActivo) return;
         let csv = '\uFEFF';
         csv += `Subcontrato:,HERRERÍA\nPromoción:,${presupuestoActivo.promocion}\nDesarrollo:,${presupuestoActivo.desarrollo}\nCiudad:,${presupuestoActivo.ciudad}\nFecha:,${presupuestoActivo.fecha}\nPROVEEDOR:,BENCH\n\n`;
-        csv += `Código,Descripción,Unidad,Cantidad,Módulos,Piezas Totales,M2 Pintura,Tipo Pintura,Kg pza,PU. Kg,P. Unitario,SUMA\n`;
-
+        csv += `Código, Descripción, Unidad, Cantidad, Módulos, Piezas Totales, M2 Pintura, Tipo Pintura, Kg pza, PU. Kg, P. Unitario, SUMA\n`;
+        
         presupuestoActivo.partidas.forEach(p => {
             const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
             const piezasTotales = p.cantidad * p.modulos;
             const suma = finanzas.precioUnitarioFinal * piezasTotales;
-
             csv += `${p.codigo},"${p.descripcion.replace(/"/g, '""')}",${p.unidad},${p.cantidad},${p.modulos},${piezasTotales},${finanzas.m2Pintura.toFixed(2)},${p.tipoPintura},${finanzas.kgTotales.toFixed(2)},${finanzas.precioKgCliente.toFixed(2)},${finanzas.precioUnitarioFinal.toFixed(2)},${suma.toFixed(2)}\n`;
         });
 
@@ -195,6 +231,7 @@ export default function Presupuestos() {
                 modelosConPrecio++;
             }
         });
+
         const promedioCalculado = modelosConPrecio > 0 ? (sumatoriaPreciosKgCalculado / modelosConPrecio) : 0;
 
         return (
@@ -205,8 +242,8 @@ export default function Presupuestos() {
                         <p className="text-xs text-gray-400">Cliente: {presupuestoActivo.cliente} | Fecha: {presupuestoActivo.fecha}</p>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={exportarExcel} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-bold shadow">📊 Exportar a Excel</button>
-                        <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold shadow">📄 Guardar PDF</button>
+                        <button onClick={exportarExcel} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-bold shadow">Exportar a Excel</button>
+                        <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold shadow">Guardar PDF</button>
                         <button onClick={() => setPresupuestoActivo(null)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm font-bold">Cerrar</button>
                     </div>
                 </div>
@@ -226,8 +263,7 @@ export default function Presupuestos() {
                                         <span className="font-medium text-gray-700 truncate pr-2" title={mat?.nombre}>{mat?.nombre}</span>
                                         <div className="flex items-center gap-1 w-28">
                                             <span className="text-gray-500 font-bold">$</span>
-                                            <input type="number" step="0.01" className="w-full p-1 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white"
-                                                value={pm.precioTramo || ''} onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))} />
+                                            <input type="number" step="0.01" className="w-full p-1 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white" value={pm.precioTramo || ""} onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))} />
                                         </div>
                                     </div>
                                 );
@@ -242,7 +278,7 @@ export default function Presupuestos() {
                                 {mostrarAltaModelo ? 'Cancelar Alta' : '+ Crear Nuevo Modelo'}
                             </button>
                         </div>
-
+                        
                         {mostrarAltaModelo && (
                             <div className="bg-green-50 p-4 border border-green-200 rounded mb-5 shadow-inner">
                                 <h4 className="text-sm font-bold text-green-800 mb-2 border-b border-green-200 pb-1">Alta Rápida de Modelo Estructural</h4>
@@ -280,10 +316,8 @@ export default function Presupuestos() {
                                 <label className="block text-xs font-bold text-gray-700 mb-1">Descripción Comercial</label>
                                 <input type="text" className="w-full p-2 border rounded text-sm" value={descripcion} onChange={e => setDescripcion(e.target.value)} />
                             </div>
-
                             <div><label className="block text-xs font-bold text-gray-700 mb-1">Cant/Mod</label><input type="number" className="w-full p-2 border rounded text-sm" value={cantidad} onChange={e => setCantidad(e.target.value)} /></div>
                             <div><label className="block text-xs font-bold text-gray-700 mb-1">Módulos</label><input type="number" className="w-full p-2 border rounded text-sm" value={modulos} onChange={e => setModulos(e.target.value)} /></div>
-
                             <div className="border-l pl-3"><label className="block text-xs font-bold text-purple-700 mb-1">Largo (m)</label><input type="number" step="0.01" className="w-full p-2 border border-purple-200 rounded text-sm" value={largo} onChange={e => setLargo(e.target.value)} /></div>
                             <div><label className="block text-xs font-bold text-purple-700 mb-1">Ancho (m)</label><input type="number" step="0.01" className="w-full p-2 border border-purple-200 rounded text-sm" value={ancho} onChange={e => setAncho(e.target.value)} /></div>
                             <div className="col-span-2"><label className="block text-xs font-bold text-purple-700 mb-1">Acabado (Pintura)</label>
@@ -311,7 +345,7 @@ export default function Presupuestos() {
                                 <th className="p-2 text-right">PU. Kg Final</th>
                                 <th className="p-2 text-right bg-blue-50 text-blue-900 font-bold">P. Unit. (Pza)</th>
                                 <th className="p-2 text-right font-bold text-green-700">SUMA TOTAL</th>
-                                <th className="p-2 text-center">✕</th>
+                                <th className="p-2 text-center">X</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -320,29 +354,24 @@ export default function Presupuestos() {
                                 const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
                                 const piezasTotales = p.cantidad * p.modulos;
                                 const suma = finanzas.precioUnitarioFinal * piezasTotales;
-
                                 granTotal += suma;
-
                                 return (
                                     <tr key={p.id} className="hover:bg-gray-50">
                                         <td className="p-2 font-bold">{p.codigo}</td>
                                         <td className="p-2 text-gray-700 whitespace-normal min-w-[250px] text-[11px] leading-tight">
                                             <span className="block font-semibold mb-1">{p.descripcion}</span>
-                                            {p.tipoPintura !== 'Ninguna' && <span className="text-purple-600 font-medium block">Pintura {p.tipoPintura} ({finanzas.m2Pintura.toFixed(2)} m²) = +${finanzas.costoPintura.toFixed(2)}/pza</span>}
+                                            {p.tipoPintura !== 'Ninguna' && <span className="text-purple-600 font-medium block">Pintura {p.tipoPintura} ({finanzas.m2Pintura?.toFixed(2) || finanzas.m2Pintura.toFixed(2)} m²) = +${finanzas.costoPintura.toFixed(2)}/pza</span>}
                                         </td>
                                         <td className="p-2 text-center font-bold text-gray-900">{piezasTotales}</td>
                                         <td className="p-2 text-center bg-purple-50/30 text-purple-700 font-medium">{finanzas.m2Pintura.toFixed(2)} m²</td>
                                         <td className="p-2 text-center font-bold text-yellow-700 bg-yellow-50/30">{finanzas.kgTotales.toFixed(2)}</td>
                                         <td className="p-2 text-right font-medium text-gray-400 line-through">${finanzas.precioKgCalculado.toFixed(2)}</td>
-
-                                        {/* AQUÍ ESTÁ EL CAMBIO A PRECIO KG CLIENTE (CON TITLE PARA VER EL BASE ACERO) */}
                                         <td className="p-2 text-right font-bold text-gray-800" title={`Base acero (sin pintura): $${finanzas.precioKgFinal.toFixed(2)}`}>
                                             ${finanzas.precioKgCliente.toFixed(2)}
                                         </td>
-
                                         <td className="p-2 text-right font-black text-blue-700 bg-blue-50/30">${finanzas.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                                         <td className="p-2 text-right font-black text-green-700 bg-green-50/20">${suma.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                                        <td className="p-2 text-center"><button onClick={() => eliminarPartida(p.id)} className="text-red-500 hover:text-red-700 font-bold px-2">✕</button></td>
+                                        <td className="p-2 text-center"><button onClick={() => eliminarPartida(p.id)} className="text-red-500 hover:text-red-700 font-bold px-2">X</button></td>
                                     </tr>
                                 );
                             })}
@@ -353,7 +382,7 @@ export default function Presupuestos() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 items-center">
                     <div className="bg-gray-100 border border-gray-300 p-4 rounded shadow-sm text-center">
                         <span className="block text-sm font-bold text-gray-600">Promedio Base Calculado (Solo Acero):</span>
-                        <span className="block text-xl font-black text-gray-500">${promedioCalculado.toFixed(2)} / Kg</span>
+                        <span className="block text-xl font-black text-gray-500">${promedioCalculado.toFixed(2)}/Kg</span>
                     </div>
                     <div className="bg-blue-50 border border-blue-300 p-4 rounded shadow-sm text-center">
                         <span className="block text-sm font-bold text-blue-800 mb-1">Ajustar Precio Base por Kg:</span>
@@ -362,7 +391,7 @@ export default function Presupuestos() {
                             <input
                                 type="number" step="0.01"
                                 className="w-28 p-2 border border-blue-400 rounded text-center font-bold text-blue-900 bg-white shadow-inner"
-                                value={presupuestoActivo.precioGlobalKg || ''}
+                                value={presupuestoActivo.precioGlobalKg || ""}
                                 onChange={e => fijarPrecioGlobalKg(Number(e.target.value))}
                                 placeholder={promedioCalculado.toFixed(2)}
                             />
@@ -378,7 +407,7 @@ export default function Presupuestos() {
                 {/* CSS OCULTO PARA LA IMPRESIÓN (PDF) */}
                 <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white">
                     <style type="text/css" media="print">
-                        {`@page { size: landscape; margin: 10mm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
+                        {`@page { size: landscape; margin: 10mm; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
                     </style>
                     <div className="flex justify-between items-start mb-6">
                         <table className="text-xs">
@@ -412,7 +441,7 @@ export default function Presupuestos() {
                             {presupuestoActivo.partidas.map(p => {
                                 const fin = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
                                 const pzas = p.cantidad * p.modulos;
-                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m2 de Pintura ${p.tipoPintura})` : '';
+                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m² de Pintura ${p.tipoPintura})` : "";
                                 return (
                                     <tr key={p.id}>
                                         <td className="border border-black p-1">{p.codigo}</td>
@@ -421,10 +450,7 @@ export default function Presupuestos() {
                                         <td className="border border-black p-1">{p.cantidad}</td>
                                         <td className="border border-black p-1">{p.modulos}</td>
                                         <td className="border border-black p-1 font-bold">{pzas}</td>
-
-                                        {/* AQUÍ ESTÁ EL CAMBIO A PRECIO KG CLIENTE EN EL PDF */}
                                         <td className="border border-black p-1">${fin.precioKgCliente.toFixed(2)}</td>
-
                                         <td className="border border-black p-1">{fin.kgTotales.toFixed(2)}</td>
                                         <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                                         <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>

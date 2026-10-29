@@ -1,28 +1,34 @@
 import { useState, useEffect } from 'react';
+import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { Material, ModeloHerreria, MaterialRequerido } from '../types';
 
 export default function ModelosHerreria() {
+    // MATERIALES SE MANTIENEN EN LOCALSTORAGE TEMPORALMENTE
     const [materiales] = useState<Material[]>(() => {
         const guardado = localStorage.getItem('bench_materiales');
         return guardado ? JSON.parse(guardado) : [];
     });
 
-    const [modelos, setModelos] = useState<ModeloHerreria[]>(() => {
-        const guardado = localStorage.getItem('bench_modelos');
-        return guardado ? JSON.parse(guardado) : [];
-    });
+    // MODELOS AHORA VIENEN DE LA NUBE EN TIEMPO REAL
+    const [modelos, setModelos] = useState<ModeloHerreria[]>([]);
 
     const [nombre, setNombre] = useState('');
     const [receta, setReceta] = useState<MaterialRequerido[]>([]);
     const [matId, setMatId] = useState('');
     const [cantidad, setCantidad] = useState('');
 
-    // Nuevo estado para controlar la edición
+    // Estado para controlar la edición
     const [editandoId, setEditandoId] = useState<string | null>(null);
 
+    // VIGILANTE DE FIREBASE: Escucha los modelos y recetas en tiempo real
     useEffect(() => {
-        localStorage.setItem('bench_modelos', JSON.stringify(modelos));
-    }, [modelos]);
+        const desuscribir = onSnapshot(collection(db, 'modelos'), (snapshot) => {
+            const modelosData = snapshot.docs.map(doc => doc.data() as ModeloHerreria);
+            setModelos(modelosData);
+        });
+        return () => desuscribir();
+    }, []);
 
     const agregarMaterial = () => {
         if (!matId || !cantidad) return;
@@ -35,29 +41,39 @@ export default function ModelosHerreria() {
         setReceta(receta.filter((_, i) => i !== index));
     };
 
-    const guardarModelo = (e: React.FormEvent) => {
+    // FUNCIÓN MIGRADA A NUBE: Guardar o actualizar modelo
+    const guardarModelo = async (e: React.FormEvent) => {
         e.preventDefault();
         if (receta.length === 0) {
             alert('La receta debe incluir al menos un material de acero.');
             return;
         }
 
-        if (editandoId) {
-            // Actualizar modelo existente
-            setModelos(modelos.map(m => m.id === editandoId ? { ...m, nombre, receta } : m));
-            setEditandoId(null);
-        } else {
-            // Crear modelo nuevo
-            const nuevoModelo: ModeloHerreria = {
-                id: Date.now().toString(),
-                nombre,
-                receta
-            };
-            setModelos([...modelos, nuevoModelo]);
-        }
+        try {
+            if (editandoId) {
+                // Actualizar modelo existente en Firestore
+                await updateDoc(doc(db, 'modelos', editandoId), {
+                    nombre,
+                    receta
+                });
+                setEditandoId(null);
+            } else {
+                // Crear modelo nuevo en Firestore
+                const nuevoId = Date.now().toString();
+                const nuevoModelo: ModeloHerreria = {
+                    id: nuevoId,
+                    nombre,
+                    receta
+                };
+                await setDoc(doc(db, 'modelos', nuevoId), nuevoModelo);
+            }
 
-        setNombre('');
-        setReceta([]);
+            setNombre('');
+            setReceta([]);
+        } catch (error) {
+            console.error("Error al guardar el modelo en la nube:", error);
+            alert("Hubo un error al sincronizar con el servidor.");
+        }
     };
 
     const cargarParaEditar = (modelo: ModeloHerreria) => {
@@ -75,10 +91,16 @@ export default function ModelosHerreria() {
         setCantidad('');
     };
 
-    const eliminarModelo = (id: string) => {
+    // FUNCIÓN MIGRADA A NUBE: Eliminar modelo
+    const eliminarModelo = async (id: string) => {
         if (confirm('¿Estás seguro de dar de baja este modelo del catálogo?')) {
-            setModelos(modelos.filter(m => m.id !== id));
-            if (editandoId === id) cancelarEdicion();
+            try {
+                await deleteDoc(doc(db, 'modelos', id));
+                if (editandoId === id) cancelarEdicion();
+            } catch (error) {
+                console.error("Error al eliminar el modelo:", error);
+                alert("No se pudo eliminar el registro del servidor.");
+            }
         }
     };
 
@@ -126,7 +148,7 @@ export default function ModelosHerreria() {
                         const mat = materiales.find(m => m.id === r.materialId);
                         return (
                             <li key={i} className="flex justify-between items-center border-b pb-1">
-                                <span>{mat?.nombre} - <strong>{r.cantidadMetros} ml</strong></span>
+                                <span>{mat?.nombre} <strong>{r.cantidadMetros} ml</strong></span>
                                 <button onClick={() => quitarMaterialDeReceta(i)} className="text-red-500 hover:text-red-700 font-bold px-2">✕</button>
                             </li>
                         );
@@ -157,7 +179,7 @@ export default function ModelosHerreria() {
                                     <td className="p-3 text-xs text-gray-600">
                                         {m.receta.map(r => {
                                             const mat = materiales.find(mat => mat.id === r.materialId);
-                                            return `${mat?.nombre} (${r.cantidadMetros}m)`;
+                                            return `${mat?.nombre || 'Material'} (${r.cantidadMetros}m)`;
                                         }).join(', ')}
                                     </td>
                                     <td className="p-3 text-center space-x-2">
