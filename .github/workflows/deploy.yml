@@ -26,12 +26,23 @@ jobs:
 
       - name: Deploy dist to VPS
         env:
-          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          HOST: ${{ secrets.VPS_HOST }}
-          USER: ${{ secrets.VPS_USER }}
+          RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
+          RAW_HOST: ${{ secrets.VPS_HOST }}
+          RAW_USER: ${{ secrets.VPS_USER }}
         run: |
+          # Limpiar posibles palabras repetidas en los secrets
+          TARGET_HOST=$(echo "$RAW_HOST" | awk '{print $NF}')
+          TARGET_USER=$(echo "$RAW_USER" | awk '{print $NF}')
+          
+          echo "Desplegando hacia: $TARGET_USER@$TARGET_HOST"
+          
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" | sed -n '/-----BEGIN/,/-----END/p' | tr -d '\r' > ~/.ssh/id_deploy
+          echo "$RAW_KEY" | tr -d '\r' | sed 's/.*-----BEGIN/-----BEGIN/' | sed -n '/-----BEGIN/,/-----END/p' > ~/.ssh/id_deploy
           echo "" >> ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=no -p 22 -i ~/.ssh/id_deploy" dist/ $USER@$HOST:/var/www/html/
+          
+          # Probar conexion SSH
+          ssh -o StrictHostKeyChecking=no -p 22 -i ~/.ssh/id_deploy $TARGET_USER@$TARGET_HOST "echo 'Conectado exitosamente al VPS'"
+          
+          # Sincronizar archivos
+          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=no -p 22 -i ~/.ssh/id_deploy" dist/ $TARGET_USER@$TARGET_HOST:/var/www/html/
