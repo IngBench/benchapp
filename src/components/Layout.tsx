@@ -9,11 +9,12 @@ interface LayoutProps {
 export default function Layout({ children, activeView, setActiveView }: LayoutProps) {
     const menuItems = [
         { id: 'obras', label: 'Obras y Contratos', icon: '🏗️' },
-        { id: 'presupuestos', label: 'Presupuestos (Cotizador)', icon: '📝' }, // <-- NUEVA LÍNEA
+        { id: 'presupuestos', label: 'Presupuestos (Cotizador)', icon: '📝' },
         { id: 'inventario', label: 'Almacén y Compras', icon: '📦' },
         { id: 'taller', label: 'Taller y Destajos', icon: '👨‍🏭' },
         { id: 'modelos', label: 'Modelos de Herrería', icon: '📐' },
-        { id: 'materiales', label: 'Catálogo de Acero', icon: '🔩' }
+        { id: 'materiales', label: 'Catálogo de Acero', icon: '🔩' },
+        { id: 'usuarios', label: 'Control de Usuarios', icon: '👥' }
     ];
 
     return (
@@ -21,7 +22,6 @@ export default function Layout({ children, activeView, setActiveView }: LayoutPr
             {/* Barra Lateral (Sidebar) */}
             <aside className="w-64 bg-gray-900 text-white flex flex-col shadow-xl">
                 <div className="p-6 border-b border-gray-800 flex flex-col items-center">
-                    {/* Aquí mandamos llamar la imagen desde la carpeta public */}
                     <img
                         src="/logo.jpeg"
                         alt="Bench Ingeniería"
