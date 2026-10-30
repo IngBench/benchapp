@@ -20,7 +20,8 @@ export default function Presupuestos() {
         desarrollo: '',
         ciudad: '',
         cliente: 'GRUPO SAN CARLOS',
-        fecha: new Date().toISOString().split('T')[0]
+        fecha: new Date().toISOString().split('T')[0],
+        mostrarLote: false
     });
 
     // Control del Modal de edición de datos generales del presupuesto
@@ -29,6 +30,7 @@ export default function Presupuestos() {
 
     // Formulario para Conceptos / Partidas
     const [partidaEditandoId, setPartidaEditandoId] = useState<string | null>(null);
+    const [lote, setLote] = useState('');
     const [modeloSel, setModeloSel] = useState('');
     const [codigo, setCodigo] = useState('');
     const [descripcion, setDescripcion] = useState('');
@@ -130,7 +132,8 @@ export default function Presupuestos() {
             fecha: fechaFormateada,
             partidas: [],
             preciosMateriales: [],
-            precioGlobalKg: 0
+            precioGlobalKg: 0,
+            mostrarLote: formCabecera.mostrarLote || false
         };
 
         try {
@@ -143,7 +146,8 @@ export default function Presupuestos() {
                 desarrollo: '',
                 ciudad: '',
                 cliente: 'GRUPO SAN CARLOS',
-                fecha: new Date().toISOString().split('T')[0]
+                fecha: new Date().toISOString().split('T')[0],
+                mostrarLote: false
             });
         } catch (error) {
             console.error('Error al crear presupuesto en la nube:', error);
@@ -167,7 +171,8 @@ export default function Presupuestos() {
             desarrollo: p.desarrollo || '',
             ciudad: p.ciudad || '',
             cliente: p.cliente || '',
-            fecha: fechaIso
+            fecha: fechaIso,
+            mostrarLote: p.mostrarLote || false
         });
         setModalEditarPresupuesto(true);
     };
@@ -188,7 +193,8 @@ export default function Presupuestos() {
                 desarrollo: formCabecera.desarrollo.trim().toUpperCase(),
                 ciudad: formCabecera.ciudad.trim().toUpperCase(),
                 cliente: formCabecera.cliente.trim(),
-                fecha: fechaFormateada
+                fecha: fechaFormateada,
+                mostrarLote: formCabecera.mostrarLote || false
             });
 
             setModalEditarPresupuesto(false);
@@ -662,6 +668,7 @@ export default function Presupuestos() {
                 if (p.id === partidaEditandoId) {
                     return {
                         ...p,
+                        lote: lote.trim(),
                         modeloId: modeloSel,
                         codigo: codigo.trim(),
                         descripcion: descripcion.trim() || mod?.nombre || '',
@@ -689,6 +696,7 @@ export default function Presupuestos() {
             // Agregar nueva partida
             const nuevaPartida: PartidaPresupuesto = {
                 id: Date.now().toString(),
+                lote: lote.trim(),
                 modeloId: modeloSel,
                 codigo: codigo.trim(),
                 descripcion: descripcion.trim() || mod?.nombre || '',
@@ -709,6 +717,7 @@ export default function Presupuestos() {
                 });
 
                 setModeloSel('');
+                setLote('');
                 setCodigo('');
                 setDescripcion('');
                 setCantidad('1');
@@ -726,6 +735,7 @@ export default function Presupuestos() {
     // CARGAR PARTIDA PARA EDITAR
     const cargarPartidaParaEditar = (p: PartidaPresupuesto) => {
         setPartidaEditandoId(p.id);
+        setLote(p.lote || '');
         setModeloSel(p.modeloId);
         setCodigo(p.codigo);
         setDescripcion(p.descripcion);
@@ -740,6 +750,7 @@ export default function Presupuestos() {
     // CANCELAR EDICIÓN DE PARTIDA
     const cancelarEdicionPartida = () => {
         setPartidaEditandoId(null);
+        setLote('');
         setModeloSel('');
         setCodigo('');
         setDescripcion('');
@@ -748,6 +759,20 @@ export default function Presupuestos() {
         setLargo('');
         setAncho('');
         setTipoPintura('Ninguna');
+    };
+
+    // ALTERNAR COLUMNA LOTE EN ESTE PRESUPUESTO
+    const toggleColumnaLote = async () => {
+        if (!presupuestoActivo) return;
+        const nuevoEstado = !presupuestoActivo.mostrarLote;
+        try {
+            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
+                mostrarLote: nuevoEstado
+            });
+        } catch (error) {
+            console.error('Error al cambiar visualización de columna Lote:', error);
+            alert('No se pudo actualizar la configuración del presupuesto.');
+        }
     };
 
     // ELIMINAR PARTIDA
@@ -863,13 +888,16 @@ export default function Presupuestos() {
         let csv = '\uFEFF';
         csv += `Presupuesto:,${presupuestoActivo.nombre || 'Presupuesto'}\n`;
         csv += `Subcontrato:,HERRERÍA\nPromoción:,${presupuestoActivo.promocion}\nDesarrollo:,${presupuestoActivo.desarrollo}\nCiudad:,${presupuestoActivo.ciudad}\nFecha:,${presupuestoActivo.fecha}\nPROVEEDOR:,BENCH\n\n`;
-        csv += `Código, Descripción, Unidad, Cantidad, Módulos, Total Piezas, M2 Pintura, Tipo Pintura, Kgs x Pieza, P.U. Kg, P.U. x Pieza, Suma\n`;
+        const incluyeLote = !!presupuestoActivo.mostrarLote;
+        const encabezadoLote = incluyeLote ? 'Lote, ' : '';
+        csv += `${encabezadoLote}Código, Descripción, Unidad, Cantidad, Módulos, Total Piezas, M2 Pintura, Tipo Pintura, Kgs x Pieza, P.U. Kg, P.U. x Pieza, Suma\n`;
 
         presupuestoActivo.partidas.forEach(p => {
             const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
             const piezasTotales = p.cantidad * p.modulos;
             const suma = finanzas.precioUnitarioFinal * piezasTotales;
-            csv += `${p.codigo},"${p.descripcion.replace(/"/g, '""')}",${p.unidad},${p.cantidad},${p.modulos},${piezasTotales},${finanzas.m2Pintura.toFixed(2)},${p.tipoPintura},${finanzas.kgTotales.toFixed(2)},${finanzas.precioKgCliente.toFixed(2)},${finanzas.precioUnitarioFinal.toFixed(2)},${suma.toFixed(2)}\n`;
+            const celdaLote = incluyeLote ? `"${(p.lote || '').replace(/"/g, '""')}", ` : '';
+            csv += `${celdaLote}${p.codigo},"${p.descripcion.replace(/"/g, '""')}",${p.unidad},${p.cantidad},${p.modulos},${piezasTotales},${finanzas.m2Pintura.toFixed(2)},${p.tipoPintura},${finanzas.kgTotales.toFixed(2)},${finanzas.precioKgCliente.toFixed(2)},${finanzas.precioUnitarioFinal.toFixed(2)},${suma.toFixed(2)}\n`;
         });
 
         csv += `\nPRECIOS NETOS\nPRECIOS POR KG INCLUYEN PINTURA\n`;
@@ -981,6 +1009,19 @@ export default function Presupuestos() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={toggleColumnaLote}
+                            className={`px-3.5 py-2 rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition-colors border cursor-pointer ${
+                                presupuestoActivo.mostrarLote
+                                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-400'
+                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-600'
+                            }`}
+                            title="Habilitar o deshabilitar columna Lote en este presupuesto"
+                        >
+                            <span>🏷️</span>
+                            <span>Columna Lote: {presupuestoActivo.mostrarLote ? 'Visible' : 'Oculta'}</span>
+                        </button>
                         <button
                             type="button"
                             onClick={() => abrirEdicionPresupuesto(presupuestoActivo)}
@@ -1122,6 +1163,26 @@ export default function Presupuestos() {
                                         value={formCabecera.fecha}
                                         onChange={e => setFormCabecera({ ...formCabecera, fecha: e.target.value })}
                                     />
+                                </div>
+
+                                <div className="bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 flex items-center justify-between">
+                                    <div>
+                                        <label className="text-xs font-bold text-indigo-950 block">
+                                            Habilitar Columna "Lote"
+                                        </label>
+                                        <span className="text-[11px] text-gray-500">
+                                            Agrega una columna al inicio para registrar y cotizar por número de lote o casa.
+                                        </span>
+                                    </div>
+                                    <label className="inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!formCabecera.mostrarLote}
+                                            onChange={e => setFormCabecera({ ...formCabecera, mostrarLote: e.target.checked })}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="relative w-9 h-5 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" />
+                                    </label>
                                 </div>
 
                                 <div className="flex justify-end gap-2 pt-2 border-t">
@@ -1379,6 +1440,18 @@ export default function Presupuestos() {
                                         ))}
                                     </select>
                                 </div>
+                                {presupuestoActivo.mostrarLote && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-indigo-900 mb-1">Lote</label>
+                                        <input
+                                            type="text"
+                                            className="w-full p-2 border border-indigo-300 rounded text-sm bg-indigo-50/30 font-bold text-indigo-950 focus:bg-white"
+                                            placeholder="Ej. L-14"
+                                            value={lote}
+                                            onChange={e => setLote(e.target.value)}
+                                        />
+                                    </div>
+                                )}
                                 <div>
                                     <label className="block text-xs font-bold text-gray-700 mb-1">Código</label>
                                     <input
@@ -1389,7 +1462,7 @@ export default function Presupuestos() {
                                         onChange={e => setCodigo(e.target.value)}
                                     />
                                 </div>
-                                <div className="col-span-2 md:col-span-3">
+                                <div className={presupuestoActivo.mostrarLote ? 'col-span-2' : 'col-span-2 md:col-span-3'}>
                                     <label className="block text-xs font-bold text-gray-700 mb-1">Descripción Comercial</label>
                                     <input
                                         type="text"
@@ -1484,6 +1557,9 @@ export default function Presupuestos() {
                     <table className="w-full text-left text-xs whitespace-nowrap">
                         <thead className="bg-gray-100 border-b text-gray-700">
                             <tr>
+                                {presupuestoActivo.mostrarLote && (
+                                    <th className="p-2.5 min-w-[70px] text-indigo-900 bg-indigo-50/70 font-black">Lote</th>
+                                )}
                                 <th className="p-2.5">Cód</th>
                                 <th className="p-2.5 min-w-[200px]">Descripción</th>
                                 <th className="p-2.5 text-center">Pzas Tot</th>
@@ -1499,20 +1575,24 @@ export default function Presupuestos() {
                         <tbody className="divide-y divide-gray-200">
                             {presupuestoActivo.partidas.length === 0 ? (
                                 <tr>
-                                    <td colSpan={10} className="p-8 text-center text-gray-400 italic">
+                                    <td colSpan={presupuestoActivo.mostrarLote ? 11 : 10} className="p-8 text-center text-gray-400 italic">
                                         Sin partidas agregadas. Añade conceptos arriba para armar la cotización.
                                     </td>
                                 </tr>
                             ) : (
                                 presupuestoActivo.partidas.map(p => {
                                     const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
+                                    const fin = finanzas;
                                     const piezasTotales = p.cantidad * p.modulos;
-                                    const suma = finanzas.precioUnitarioFinal * piezasTotales;
+                                    const suma = fin.precioUnitarioFinal * piezasTotales;
                                     granTotal += suma;
                                     const estaEditando = partidaEditandoId === p.id;
 
                                     return (
                                         <tr key={p.id} className={estaEditando ? 'bg-amber-100/70 font-semibold' : 'hover:bg-gray-50'}>
+                                            {presupuestoActivo.mostrarLote && (
+                                                <td className="p-2.5 font-black text-indigo-950 bg-indigo-50/30">{p.lote || '-'}</td>
+                                            )}
                                             <td className="p-2.5 font-bold text-gray-800">{p.codigo || '-'}</td>
                                             <td className="p-2.5 text-gray-700 whitespace-normal min-w-[240px] text-[11px] leading-tight">
                                                 <span className="block font-semibold mb-0.5">{p.descripcion}</span>
@@ -1638,15 +1718,18 @@ export default function Presupuestos() {
                     <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
                         <thead className="bg-gray-200 font-bold">
                             <tr>
-                                <th className="border border-black p-1 w-[12%]">Código</th>
-                                <th className="border border-black p-1 text-left w-[35%]">Descripción</th>
-                                <th className="border border-black p-1 w-[6%]">Unidad</th>
-                                <th className="border border-black p-1 w-[6%]">Cantidad</th>
-                                <th className="border border-black p-1 w-[6%]">Módulos</th>
+                                {presupuestoActivo.mostrarLote && (
+                                    <th className="border border-black p-1 w-[8%]">Lote</th>
+                                )}
+                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
+                                <th className={`border border-black p-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[32%]' : 'w-[35%]'}`}>Descripción</th>
+                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
+                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
+                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
                                 <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
                                 <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
                                 <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
-                                <th className="border border-black p-1 w-[11%] leading-tight">P.U. x Pieza</th>
+                                <th className={`border border-black p-1 leading-tight ${presupuestoActivo.mostrarLote ? 'w-[10%]' : 'w-[11%]'}`}>P.U. x Pieza</th>
                                 <th className="border border-black p-1 w-[12%]">Suma</th>
                             </tr>
                         </thead>
@@ -1657,6 +1740,9 @@ export default function Presupuestos() {
                                 const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye Pintura ${p.tipoPintura})` : '';
                                 return (
                                     <tr key={p.id}>
+                                        {presupuestoActivo.mostrarLote && (
+                                            <td className="border border-black p-1 font-bold break-words">{p.lote || '-'}</td>
+                                        )}
                                         <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
                                         <td className="border border-black p-1 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
                                         <td className="border border-black p-1">{p.unidad}</td>
@@ -1671,7 +1757,7 @@ export default function Presupuestos() {
                                 );
                             })}
                             <tr>
-                                <td colSpan={9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
+                                <td colSpan={presupuestoActivo.mostrarLote ? 10 : 9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
                                 <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                         </tbody>
@@ -1802,6 +1888,26 @@ export default function Presupuestos() {
                         />
                     </div>
 
+                    <div className="md:col-span-12 bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 flex items-center justify-between">
+                        <div>
+                            <label className="text-xs font-bold text-indigo-950 block">
+                                Habilitar Columna "Lote"
+                            </label>
+                            <span className="text-[11px] text-gray-500">
+                                Marca esta opción si este presupuesto requiere registrar o desglosar por número de lote o casa.
+                            </span>
+                        </div>
+                        <label className="inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={!!formCabecera.mostrarLote}
+                                onChange={e => setFormCabecera({ ...formCabecera, mostrarLote: e.target.checked })}
+                                className="sr-only peer"
+                            />
+                            <div className="relative w-9 h-5 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" />
+                        </label>
+                    </div>
+
                     <div className="md:col-span-12 flex justify-end mt-2">
                         <button
                             type="submit"
@@ -1915,6 +2021,26 @@ export default function Presupuestos() {
                                 />
                             </div>
 
+                            <div className="bg-indigo-50/70 p-3 rounded-lg border border-indigo-200 flex items-center justify-between">
+                                <div>
+                                    <label className="text-xs font-bold text-indigo-950 block">
+                                        Habilitar Columna "Lote"
+                                    </label>
+                                    <span className="text-[11px] text-gray-500">
+                                        Agrega una columna al inicio para registrar y cotizar por número de lote o casa.
+                                    </span>
+                                </div>
+                                <label className="inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!formCabecera.mostrarLote}
+                                        onChange={e => setFormCabecera({ ...formCabecera, mostrarLote: e.target.checked })}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="relative w-9 h-5 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" />
+                                </label>
+                            </div>
+
                             <div className="flex justify-end gap-2 pt-2 border-t">
                                 <button
                                     type="button"
@@ -1981,9 +2107,16 @@ export default function Presupuestos() {
                                             <h4 className="font-extrabold text-base text-gray-900 leading-snug">
                                                 {p.nombre || p.desarrollo}
                                             </h4>
-                                            <span className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold whitespace-nowrap">
-                                                {p.partidas?.length || 0} ptds
-                                            </span>
+                                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                {p.mostrarLote && (
+                                                    <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold whitespace-nowrap">
+                                                        🏷️ Lote
+                                                    </span>
+                                                )}
+                                                <span className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold whitespace-nowrap">
+                                                    {p.partidas?.length || 0} ptds
+                                                </span>
+                                            </div>
                                         </div>
 
                                         <p className="text-xs text-gray-600 mb-1">

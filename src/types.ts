@@ -65,6 +65,7 @@ export interface PrecioMaterialPresupuesto {
 
 export interface PartidaPresupuesto {
     id: string;
+    lote?: string; // Opcional: Lote o ubicación específica
     modeloId: string;
     codigo: string;
     descripcion: string;
@@ -89,6 +90,7 @@ export interface Presupuesto {
     partidas: PartidaPresupuesto[];
     preciosMateriales: PrecioMaterialPresupuesto[]; // Precios congelados para este presupuesto
     precioGlobalKg?: number; // <--- NUEVO CAMPO AGREGADO
+    mostrarLote?: boolean; // Habilitar/Deshabilitar columna de Lote para este presupuesto
 }
 
 // CONTROL DE USUARIOS Y ACCESOS
