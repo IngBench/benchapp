@@ -8,6 +8,7 @@ import Inventario from './components/Inventario';
 import ModelosHerreria from './components/ModelosHerreria';
 import DestajosTaller from './components/DestajosTaller';
 import Presupuestos from './components/Presupuestos';
+import CatalogoMateriales from './components/CatalogoMateriales';
 
 export default function App() {
   const [activeView, setActiveView] = useState('obras');
@@ -85,7 +86,13 @@ export default function App() {
               onClick={() => setActiveView('catalogo')} 
               className={`text-left px-4 py-3 rounded text-sm font-bold transition-all ${activeView === 'catalogo' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
             >
-              Modelos y Catálogo
+              Modelos de Herrería
+            </button>
+            <button 
+              onClick={() => setActiveView('materiales')} 
+              className={`text-left px-4 py-3 rounded text-sm font-bold transition-all ${activeView === 'materiales' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+            >
+              🔩 Catálogo de Materiales
             </button>
           </nav>
         </div>
@@ -117,6 +124,7 @@ export default function App() {
         {activeView === 'catalogo' && <ModelosHerreria />}
         {activeView === 'fabricacion' && <DestajosTaller />}
         {activeView === 'presupuestos' && <Presupuestos />}
+        {activeView === 'materiales' && <CatalogoMateriales />}
       </div>
       
     </div>

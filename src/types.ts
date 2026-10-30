@@ -79,6 +79,8 @@ export interface PartidaPresupuesto {
 
 export interface Presupuesto {
     id: string;
+    nombre?: string;
+    obraId?: string;
     promocion: string;
     desarrollo: string;
     ciudad: string;

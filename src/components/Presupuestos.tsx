@@ -1,49 +1,81 @@
 import { useState, useEffect } from 'react';
-import { collection, doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { ModeloHerreria, Material, Presupuesto, PartidaPresupuesto, MaterialRequerido } from '../types';
+import type { ModeloHerreria, Material, Presupuesto, PartidaPresupuesto, MaterialRequerido, Obra } from '../types';
 
 export default function Presupuestos() {
-    // PRESUPUESTOS AHORA VIENEN DE LA NUBE EN TIEMPO REAL
+    // ESTADOS EN TIEMPO REAL DESDE FIREBASE
     const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([]);
-    
-    // Mantenemos modelos y materiales en localStorage temporalmente para la integración
-    const [modelos, setModelos] = useState<ModeloHerreria[]>(() => JSON.parse(localStorage.getItem('bench_modelos') || '[]'));
-    const [materiales] = useState<Material[]>(() => JSON.parse(localStorage.getItem('bench_materiales') || '[]'));
+    const [modelos, setModelos] = useState<ModeloHerreria[]>([]);
+    const [materiales, setMateriales] = useState<Material[]>([]);
+    const [obras, setObras] = useState<Obra[]>([]);
 
     const [presupuestoActivo, setPresupuestoActivo] = useState<Presupuesto | null>(null);
+
+    // Formulario para Crear / Editar Cabecera de Presupuesto
     const [formCabecera, setFormCabecera] = useState({
-        promocion: "", desarrollo: "", ciudad: "", cliente: 'GRUPO SAN CARLOS',
+        nombre: '',
+        obraId: '',
+        promocion: '',
+        desarrollo: '',
+        ciudad: '',
+        cliente: 'GRUPO SAN CARLOS',
         fecha: new Date().toISOString().split('T')[0]
     });
 
-    const [modeloSel, setModeloSel] = useState("");
-    const [codigo, setCodigo] = useState("");
-    const [descripcion, setDescripcion] = useState("");
+    // Control del Modal de edición de datos generales del presupuesto
+    const [modalEditarPresupuesto, setModalEditarPresupuesto] = useState(false);
+    const [editandoPresupuestoId, setEditandoPresupuestoId] = useState<string | null>(null);
+
+    // Formulario para Conceptos / Partidas
+    const [partidaEditandoId, setPartidaEditandoId] = useState<string | null>(null);
+    const [modeloSel, setModeloSel] = useState('');
+    const [codigo, setCodigo] = useState('');
+    const [descripcion, setDescripcion] = useState('');
     const [cantidad, setCantidad] = useState('1');
     const [modulos, setModulos] = useState('1');
-    const [largo, setLargo] = useState("");
-    const [ancho, setAncho] = useState("");
+    const [largo, setLargo] = useState('');
+    const [ancho, setAncho] = useState('');
     const [tipoPintura, setTipoPintura] = useState<'Esmalte' | 'Electroestática' | 'Ninguna'>('Ninguna');
 
+    // Alta rápida de modelo estructural dentro del cotizador
     const [mostrarAltaModelo, setMostrarAltaModelo] = useState(false);
-    const [nuevoModNombre, setNuevoModNombre] = useState("");
+    const [nuevoModNombre, setNuevoModNombre] = useState('');
     const [nuevoModReceta, setNuevoModReceta] = useState<MaterialRequerido[]>([]);
-    const [tempMatId, setTempMatId] = useState("");
-    const [tempMatCant, setTempMatCant] = useState("");
+    const [tempMatId, setTempMatId] = useState('');
+    const [tempMatCant, setTempMatCant] = useState('');
 
-    // VIGILANTE DE FIREBASE: Escucha cotizaciones en tiempo real
+    // Búsqueda en listado
+    const [busqueda, setBusqueda] = useState('');
+
+    // VIGILANTES DE FIREBASE (Escuchan en tiempo real)
     useEffect(() => {
-        const desuscribir = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
+        const desuscribirPresupuestos = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
             const presupuestosData = snapshot.docs.map(doc => doc.data() as Presupuesto);
             setPresupuestos(presupuestosData);
         });
-        return () => desuscribir();
+        const desuscribirModelos = onSnapshot(collection(db, 'modelos'), (snapshot) => {
+            const modelosData = snapshot.docs.map(doc => doc.data() as ModeloHerreria);
+            setModelos(modelosData);
+        });
+        const desuscribirMateriales = onSnapshot(collection(db, 'materiales'), (snapshot) => {
+            const materialesData = snapshot.docs.map(doc => doc.data() as Material);
+            setMateriales(materialesData);
+        });
+        const desuscribirObras = onSnapshot(collection(db, 'obras'), (snapshot) => {
+            const obrasData = snapshot.docs.map(doc => doc.data() as Obra);
+            setObras(obrasData);
+        });
+
+        return () => {
+            desuscribirPresupuestos();
+            desuscribirModelos();
+            desuscribirMateriales();
+            desuscribirObras();
+        };
     }, []);
 
-    useEffect(() => { localStorage.setItem('bench_modelos', JSON.stringify(modelos)); }, [modelos]);
-
-    // Mantener actualizado el presupuesto activo si hay cambios desde otra terminal
+    // Mantener sincronizado el presupuesto activo con la nube
     useEffect(() => {
         if (presupuestoActivo) {
             const act = presupuestos.find(p => p.id === presupuestoActivo.id);
@@ -51,17 +83,41 @@ export default function Presupuestos() {
         }
     }, [presupuestos]);
 
-    // MIGRADO A NUBE: Crear nuevo presupuesto
+    // Cuando selecciona una Obra en el formulario, autocompletar desarrollo y cliente
+    const manejarSeleccionObra = (obraId: string) => {
+        const obra = obras.find(o => o.id === obraId);
+        if (obra) {
+            setFormCabecera(prev => ({
+                ...prev,
+                obraId,
+                nombre: prev.nombre || `Presupuesto ${obra.nombre}`,
+                desarrollo: prev.desarrollo || obra.nombre,
+                cliente: obra.cliente || prev.cliente,
+                ciudad: prev.ciudad || obra.ubicacion || ''
+            }));
+        } else {
+            setFormCabecera(prev => ({ ...prev, obraId: '' }));
+        }
+    };
+
+    // CREAR NUEVO PRESUPUESTO
     const crearPresupuesto = async (e: React.FormEvent) => {
         e.preventDefault();
         const [anio, mes, dia] = formCabecera.fecha.split('-');
-        const fechaFormateada = `${dia}/${mes}/${anio}`;
-        
+        const fechaFormateada = dia && mes && anio ? `${dia}/${mes}/${anio}` : formCabecera.fecha;
+
         const nuevoId = Date.now().toString();
+        const nombreFinal = formCabecera.nombre.trim() || `Presupuesto ${formCabecera.desarrollo || 'General'}`;
+
         const nuevo: Presupuesto = {
             id: nuevoId,
-            ...formCabecera,
-            fecha: fechaFormateada, // Se sobrescribe al final para asegurar el formato correcto (dd/mm/aaaa)
+            nombre: nombreFinal,
+            obraId: formCabecera.obraId || '',
+            promocion: formCabecera.promocion.trim(),
+            desarrollo: formCabecera.desarrollo.trim().toUpperCase(),
+            ciudad: formCabecera.ciudad.trim().toUpperCase(),
+            cliente: formCabecera.cliente.trim(),
+            fecha: fechaFormateada,
             partidas: [],
             preciosMateriales: [],
             precioGlobalKg: 0
@@ -69,102 +125,270 @@ export default function Presupuestos() {
 
         try {
             await setDoc(doc(db, 'presupuestos', nuevoId), nuevo);
-            setFormCabecera({ promocion: "", desarrollo: "", ciudad: "", cliente: 'GRUPO SAN CARLOS', fecha: new Date().toISOString().split('T')[0] });
+            setPresupuestoActivo(nuevo);
+            setFormCabecera({
+                nombre: '',
+                obraId: '',
+                promocion: '',
+                desarrollo: '',
+                ciudad: '',
+                cliente: 'GRUPO SAN CARLOS',
+                fecha: new Date().toISOString().split('T')[0]
+            });
         } catch (error) {
-            console.error("Error al crear presupuesto en la nube:", error);
+            console.error('Error al crear presupuesto en la nube:', error);
+            alert('No se pudo guardar el presupuesto.');
         }
     };
 
+    // ABRIR MODAL PARA EDITAR DATOS GENERALES
+    const abrirEdicionPresupuesto = (p: Presupuesto) => {
+        let fechaIso = new Date().toISOString().split('T')[0];
+        if (p.fecha && p.fecha.includes('/')) {
+            const [d, m, y] = p.fecha.split('/');
+            if (d && m && y) fechaIso = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+
+        setEditandoPresupuestoId(p.id);
+        setFormCabecera({
+            nombre: p.nombre || p.desarrollo || '',
+            obraId: p.obraId || '',
+            promocion: p.promocion || '',
+            desarrollo: p.desarrollo || '',
+            ciudad: p.ciudad || '',
+            cliente: p.cliente || '',
+            fecha: fechaIso
+        });
+        setModalEditarPresupuesto(true);
+    };
+
+    // GUARDAR MODIFICACIÓN DE DATOS GENERALES
+    const guardarEdicionPresupuesto = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editandoPresupuestoId) return;
+
+        const [anio, mes, dia] = formCabecera.fecha.split('-');
+        const fechaFormateada = dia && mes && anio ? `${dia}/${mes}/${anio}` : formCabecera.fecha;
+
+        try {
+            await updateDoc(doc(db, 'presupuestos', editandoPresupuestoId), {
+                nombre: formCabecera.nombre.trim(),
+                obraId: formCabecera.obraId || '',
+                promocion: formCabecera.promocion.trim(),
+                desarrollo: formCabecera.desarrollo.trim().toUpperCase(),
+                ciudad: formCabecera.ciudad.trim().toUpperCase(),
+                cliente: formCabecera.cliente.trim(),
+                fecha: fechaFormateada
+            });
+
+            setModalEditarPresupuesto(false);
+            setEditandoPresupuestoId(null);
+            alert('Datos del presupuesto modificados y guardados con éxito.');
+        } catch (error) {
+            console.error('Error al actualizar presupuesto:', error);
+            alert('Error al guardar cambios.');
+        }
+    };
+
+    // BORRAR PRESUPUESTO
+    const eliminarPresupuesto = async (id: string, nombreP: string) => {
+        if (confirm(`¿Estás seguro de que deseas eliminar permanentemente el presupuesto "${nombreP}"?`)) {
+            try {
+                await deleteDoc(doc(db, 'presupuestos', id));
+                if (presupuestoActivo?.id === id) {
+                    setPresupuestoActivo(null);
+                }
+                alert('Presupuesto eliminado correctamente.');
+            } catch (error) {
+                console.error('Error al eliminar presupuesto:', error);
+                alert('No se pudo eliminar el presupuesto.');
+            }
+        }
+    };
+
+    // ALTA RÁPIDA DE MODELO
     const agregarInsumoAlNuevoModelo = () => {
         if (!tempMatId || !tempMatCant) return;
         setNuevoModReceta([...nuevoModReceta, { materialId: tempMatId, cantidadMetros: Number(tempMatCant) }]);
-        setTempMatId(""); setTempMatCant("");
+        setTempMatId('');
+        setTempMatCant('');
     };
 
-    const guardarNuevoModelo = () => {
-        if (!nuevoModNombre || nuevoModReceta.length === 0) return alert("Faltan datos.");
-        const nuevoModeloObj: ModeloHerreria = { id: Date.now().toString(), nombre: nuevoModNombre, receta: nuevoModReceta };
-        setModelos([...modelos, nuevoModeloObj]);
-        setModeloSel(nuevoModeloObj.id);
-        setDescripcion(nuevoModeloObj.nombre);
-        setNuevoModNombre(""); setNuevoModReceta([]); setMostrarAltaModelo(false);
-    };
+    const guardarNuevoModelo = async () => {
+        if (!nuevoModNombre.trim() || nuevoModReceta.length === 0) {
+            alert('Ingresa el nombre del modelo y al menos un insumo.');
+            return;
+        }
 
-    // MIGRADO A NUBE: Agregar partida al presupuesto activo
-    const agregarPartida = async () => {
-        if (!presupuestoActivo || !modeloSel) return;
-        const nuevaPartida: PartidaPresupuesto = {
-            id: Date.now().toString(),
-            modeloId: modeloSel,
-            codigo, descripcion,
-            unidad: 'PZA',
-            cantidad: Number(cantidad),
-            modulos: Number(modulos),
-            largo: Number(largo) || 0,
-            ancho: Number(ancho) || 0,
-            tipoPintura
+        const nuevoId = Date.now().toString();
+        const nuevoModeloObj: ModeloHerreria = {
+            id: nuevoId,
+            nombre: nuevoModNombre.trim(),
+            receta: nuevoModReceta
         };
 
-        const nuevasPartidas = [...presupuestoActivo.partidas, nuevaPartida];
+        try {
+            await setDoc(doc(db, 'modelos', nuevoId), nuevoModeloObj);
+            setModeloSel(nuevoId);
+            setDescripcion(nuevoModeloObj.nombre);
+            setNuevoModNombre('');
+            setNuevoModReceta([]);
+            setMostrarAltaModelo(false);
+        } catch (error) {
+            console.error('Error al guardar modelo en la nube:', error);
+            alert('Error al guardar modelo.');
+        }
+    };
+
+    // AGREGAR O ACTUALIZAR PARTIDA
+    const guardarPartida = async () => {
+        if (!presupuestoActivo) return;
+        if (!modeloSel) {
+            alert('Por favor selecciona un modelo estructural.');
+            return;
+        }
+
         const mod = modelos.find(m => m.id === modeloSel);
         const nuevosPrecios = [...(presupuestoActivo.preciosMateriales || [])];
-        
+
         mod?.receta.forEach(req => {
             if (!nuevosPrecios.find(p => p.materialId === req.materialId)) {
                 nuevosPrecios.push({ materialId: req.materialId, precioTramo: 0 });
             }
         });
 
-        const act = { ...presupuestoActivo, partidas: nuevasPartidas, preciosMateriales: nuevosPrecios };
-
-        try {
-            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
-                partidas: act.partidas,
-                preciosMateriales: act.preciosMateriales
+        if (partidaEditandoId) {
+            // Modificar partida existente
+            const partidasActualizadas = presupuestoActivo.partidas.map(p => {
+                if (p.id === partidaEditandoId) {
+                    return {
+                        ...p,
+                        modeloId: modeloSel,
+                        codigo: codigo.trim(),
+                        descripcion: descripcion.trim() || mod?.nombre || '',
+                        cantidad: Number(cantidad) || 1,
+                        modulos: Number(modulos) || 1,
+                        largo: Number(largo) || 0,
+                        ancho: Number(ancho) || 0,
+                        tipoPintura
+                    };
+                }
+                return p;
             });
 
-            setModeloSel(""); setCodigo(""); setDescripcion(""); setCantidad('1');
-            setLargo(""); setAncho(""); setTipoPintura('Ninguna');
-        } catch (error) {
-            console.error("Error al agregar partida:", error);
+            try {
+                await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
+                    partidas: partidasActualizadas,
+                    preciosMateriales: nuevosPrecios
+                });
+                cancelarEdicionPartida();
+            } catch (error) {
+                console.error('Error al modificar partida:', error);
+                alert('Error al modificar la partida.');
+            }
+        } else {
+            // Agregar nueva partida
+            const nuevaPartida: PartidaPresupuesto = {
+                id: Date.now().toString(),
+                modeloId: modeloSel,
+                codigo: codigo.trim(),
+                descripcion: descripcion.trim() || mod?.nombre || '',
+                unidad: 'PZA',
+                cantidad: Number(cantidad) || 1,
+                modulos: Number(modulos) || 1,
+                largo: Number(largo) || 0,
+                ancho: Number(ancho) || 0,
+                tipoPintura
+            };
+
+            const nuevasPartidas = [...presupuestoActivo.partidas, nuevaPartida];
+
+            try {
+                await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
+                    partidas: nuevasPartidas,
+                    preciosMateriales: nuevosPrecios
+                });
+
+                setModeloSel('');
+                setCodigo('');
+                setDescripcion('');
+                setCantidad('1');
+                setModulos('1');
+                setLargo('');
+                setAncho('');
+                setTipoPintura('Ninguna');
+            } catch (error) {
+                console.error('Error al agregar partida:', error);
+                alert('Error al agregar partida.');
+            }
         }
     };
 
-    // MIGRADO A NUBE: Eliminar partida
-    const eliminarPartida = async (id: string) => {
+    // CARGAR PARTIDA PARA EDITAR
+    const cargarPartidaParaEditar = (p: PartidaPresupuesto) => {
+        setPartidaEditandoId(p.id);
+        setModeloSel(p.modeloId);
+        setCodigo(p.codigo);
+        setDescripcion(p.descripcion);
+        setCantidad(p.cantidad.toString());
+        setModulos(p.modulos.toString());
+        setLargo(p.largo ? p.largo.toString() : '');
+        setAncho(p.ancho ? p.ancho.toString() : '');
+        setTipoPintura(p.tipoPintura || 'Ninguna');
+        window.scrollTo({ top: 300, behavior: 'smooth' });
+    };
+
+    // CANCELAR EDICIÓN DE PARTIDA
+    const cancelarEdicionPartida = () => {
+        setPartidaEditandoId(null);
+        setModeloSel('');
+        setCodigo('');
+        setDescripcion('');
+        setCantidad('1');
+        setModulos('1');
+        setLargo('');
+        setAncho('');
+        setTipoPintura('Ninguna');
+    };
+
+    // ELIMINAR PARTIDA
+    const eliminarPartida = async (id: string, desc: string) => {
         if (!presupuestoActivo) return;
-        const act = { ...presupuestoActivo, partidas: presupuestoActivo.partidas.filter(p => p.id !== id) };
-        try {
-            await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { partidas: act.partidas });
-        } catch (error) {
-            console.error("Error al eliminar partida:", error);
+        if (confirm(`¿Eliminar la partida "${desc}"?`)) {
+            const partidasFiltradas = presupuestoActivo.partidas.filter(p => p.id !== id);
+            try {
+                await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { partidas: partidasFiltradas });
+            } catch (error) {
+                console.error('Error al eliminar partida:', error);
+                alert('No se pudo eliminar la partida.');
+            }
         }
     };
 
-    // MIGRADO A NUBE: Actualizar precio individual de material
+    // ACTUALIZAR PRECIO DE MATERIAL
     const actualizarPrecioMaterial = async (materialId: string, precioTramo: number) => {
         if (!presupuestoActivo) return;
-        const nuevosPrecios = presupuestoActivo.preciosMateriales.map(p =>
+        const nuevosPrecios = (presupuestoActivo.preciosMateriales || []).map(p =>
             p.materialId === materialId ? { ...p, precioTramo } : p
         );
         try {
             await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { preciosMateriales: nuevosPrecios });
         } catch (error) {
-            console.error("Error actualizando precio de material:", error);
+            console.error('Error actualizando precio:', error);
         }
     };
 
-    // MIGRADO A NUBE: Fijar precio global por kilo
+    // FIJAR PRECIO GLOBAL POR KILO
     const fijarPrecioGlobalKg = async (nuevoPrecio: number) => {
         if (!presupuestoActivo) return;
         try {
             await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), { precioGlobalKg: nuevoPrecio });
         } catch (error) {
-            console.error("Error actualizando precio global:", error);
+            console.error('Error actualizando precio global:', error);
         }
     };
 
-    // MOTOR FINANCIERO CON PRECIO GLOBAL Y PINTURA PRORRATEADA EN KG
+    // MOTOR FINANCIERO
     const calcularFinanzasPartida = (partida: PartidaPresupuesto, precioGlobalFijado?: number) => {
         const mod = modelos.find(m => m.id === partida.modeloId);
         let kgTotales = 0;
@@ -199,12 +423,15 @@ export default function Presupuestos() {
         return { kgTotales, precioKgCalculado, precioKgFinal, precioKgCliente, m2Pintura, costoPintura, precioUnitarioFinal };
     };
 
+    // EXPORTAR A EXCEL (CSV)
     const exportarExcel = () => {
         if (!presupuestoActivo) return;
+        const nombreArchivo = (presupuestoActivo.nombre || presupuestoActivo.desarrollo || 'Presupuesto').replace(/[^a-zA-Z0-9_-]/g, '_');
         let csv = '\uFEFF';
+        csv += `Presupuesto:,${presupuestoActivo.nombre || 'Presupuesto'}\n`;
         csv += `Subcontrato:,HERRERÍA\nPromoción:,${presupuestoActivo.promocion}\nDesarrollo:,${presupuestoActivo.desarrollo}\nCiudad:,${presupuestoActivo.ciudad}\nFecha:,${presupuestoActivo.fecha}\nPROVEEDOR:,BENCH\n\n`;
         csv += `Código, Descripción, Unidad, Cantidad, Módulos, Piezas Totales, M2 Pintura, Tipo Pintura, Kg pza, PU. Kg, P. Unitario, SUMA\n`;
-        
+
         presupuestoActivo.partidas.forEach(p => {
             const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
             const piezasTotales = p.cantidad * p.modulos;
@@ -215,10 +442,56 @@ export default function Presupuestos() {
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.setAttribute('download', `Presupuesto_${presupuestoActivo.desarrollo}.csv`);
-        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        link.setAttribute('download', `${nombreArchivo}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
+    // Calcular gran total de un presupuesto para mostrar en tarjeta
+    const calcularTotalPresupuesto = (p: Presupuesto) => {
+        let total = 0;
+        p.partidas.forEach(partida => {
+            const mod = modelos.find(m => m.id === partida.modeloId);
+            let kg = 0;
+            let sumaMateriales = 0;
+            mod?.receta.forEach(req => {
+                const mat = materiales.find(m => m.id === req.materialId);
+                if (mat) {
+                    kg += req.cantidadMetros * mat.pesoPorMetro;
+                    const longV = mat.longitudTramo || 6;
+                    const pr = p.preciosMateriales?.find(pm => pm.materialId === mat.id)?.precioTramo || 0;
+                    sumaMateriales += (req.cantidadMetros / longV) * pr;
+                }
+            });
+            const costoAcero = (p.precioGlobalKg && p.precioGlobalKg > 0)
+                ? (kg * p.precioGlobalKg)
+                : (sumaMateriales * 1.10 * 1.16 * 2.30);
+
+            const m2P = (partida.largo * partida.ancho) * 2;
+            let costoPint = 0;
+            if (partida.tipoPintura === 'Esmalte') costoPint = m2P * 225.40;
+            else if (partida.tipoPintura === 'Electroestática') costoPint = m2P * 350.00;
+
+            const unitario = costoAcero + costoPint;
+            total += unitario * (partida.cantidad * partida.modulos);
+        });
+        return total;
+    };
+
+    // Filtrar presupuestos en el listado
+    const presupuestosFiltrados = presupuestos.filter(p => {
+        const busq = busqueda.toLowerCase();
+        const nom = (p.nombre || '').toLowerCase();
+        const des = (p.desarrollo || '').toLowerCase();
+        const cli = (p.cliente || '').toLowerCase();
+        const pro = (p.promocion || '').toLowerCase();
+        return nom.includes(busq) || des.includes(busq) || cli.includes(busq) || pro.includes(busq);
+    });
+
+    // ==========================================
+    // VISTA DEL PRESUPUESTO ACTIVO (DETALLE)
+    // ==========================================
     if (presupuestoActivo) {
         let granTotal = 0;
         let sumatoriaPreciosKgCalculado = 0;
@@ -233,37 +506,239 @@ export default function Presupuestos() {
         });
 
         const promedioCalculado = modelosConPrecio > 0 ? (sumatoriaPreciosKgCalculado / modelosConPrecio) : 0;
+        const obraAsociada = obras.find(o => o.id === presupuestoActivo.obraId);
 
         return (
             <div className="space-y-6">
-                <div className="bg-gray-900 p-4 rounded text-white flex justify-between items-center shadow">
+                {/* BARRA SUPERIOR DEL PRESUPUESTO */}
+                <div className="bg-gray-900 p-5 rounded-xl text-white shadow-xl flex flex-wrap justify-between items-center gap-4">
                     <div>
-                        <h2 className="font-bold text-xl">Cotización: {presupuestoActivo.desarrollo} ({presupuestoActivo.promocion})</h2>
-                        <p className="text-xs text-gray-400">Cliente: {presupuestoActivo.cliente} | Fecha: {presupuestoActivo.fecha}</p>
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xl">📝</span>
+                            <h2 className="font-extrabold text-xl md:text-2xl text-white">
+                                {presupuestoActivo.nombre || `Cotización: ${presupuestoActivo.desarrollo}`}
+                            </h2>
+                            <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] px-2.5 py-0.5 rounded-full font-semibold">
+                                ✓ Guardado en Nube
+                            </span>
+                        </div>
+                        <p className="text-xs text-gray-300">
+                            <strong>Desarrollo:</strong> {presupuestoActivo.desarrollo} ({presupuestoActivo.promocion}) &nbsp;|&nbsp;
+                            <strong> Cliente:</strong> {presupuestoActivo.cliente} &nbsp;|&nbsp;
+                            <strong> Fecha:</strong> {presupuestoActivo.fecha}
+                            {obraAsociada && (
+                                <span className="ml-2 text-blue-400 font-semibold">
+                                    • Obra vinculada: {obraAsociada.nombre}
+                                </span>
+                            )}
+                        </p>
                     </div>
-                    <div className="flex gap-2">
-                        <button onClick={exportarExcel} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-bold shadow">Exportar a Excel</button>
-                        <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold shadow">Guardar PDF</button>
-                        <button onClick={() => setPresupuestoActivo(null)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm font-bold">Cerrar</button>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => abrirEdicionPresupuesto(presupuestoActivo)}
+                            className="bg-yellow-600 hover:bg-yellow-500 text-white px-3.5 py-2 rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition-colors"
+                            title="Editar nombre, cliente, desarrollo o fecha"
+                        >
+                            <span>✏️</span> Editar Datos
+                        </button>
+                        <button
+                            type="button"
+                            onClick={exportarExcel}
+                            className="bg-emerald-600 hover:bg-emerald-500 px-3.5 py-2 rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition-colors"
+                        >
+                            <span>📊</span> Excel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => window.print()}
+                            className="bg-blue-600 hover:bg-blue-500 px-3.5 py-2 rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition-colors"
+                        >
+                            <span>🖨️</span> PDF
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => eliminarPresupuesto(presupuestoActivo.id, presupuestoActivo.nombre || presupuestoActivo.desarrollo)}
+                            className="bg-red-900/60 hover:bg-red-700 text-red-200 hover:text-white border border-red-700/60 px-3 py-2 rounded-lg text-xs font-bold transition-colors"
+                            title="Eliminar este presupuesto permanentemente"
+                        >
+                            🗑️ Borrar
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setPresupuestoActivo(null)}
+                            className="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-xs font-bold text-gray-200 transition-colors"
+                        >
+                            ✕ Volver al Listado
+                        </button>
                     </div>
                 </div>
 
+                {/* MODAL PARA EDITAR DATOS GENERALES DEL PRESUPUESTO */}
+                {modalEditarPresupuesto && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full p-6 border border-gray-200">
+                            <div className="flex justify-between items-center border-b pb-3 mb-4">
+                                <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                    <span>✏️</span> Modificar Datos del Presupuesto
+                                </h3>
+                                <button
+                                    onClick={() => setModalEditarPresupuesto(false)}
+                                    className="text-gray-400 hover:text-gray-600 font-bold"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <form onSubmit={guardarEdicionPresupuesto} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                                        Nombre del Presupuesto <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        required
+                                        type="text"
+                                        placeholder="Ej. Presupuesto Herrería 60u Tesistán"
+                                        className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-blue-500"
+                                        value={formCabecera.nombre}
+                                        onChange={e => setFormCabecera({ ...formCabecera, nombre: e.target.value })}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                                        Vincular a Obra Existente (Opcional)
+                                    </label>
+                                    <select
+                                        className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                                        value={formCabecera.obraId}
+                                        onChange={e => manejarSeleccionObra(e.target.value)}
+                                    >
+                                        <option value="">-- Sin obra vinculada (Independiente) --</option>
+                                        {obras.map(o => (
+                                            <option key={o.id} value={o.id}>
+                                                {o.nombre} ({o.cliente})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Desarrollo / Proyecto</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-2 border border-gray-300 rounded text-sm uppercase"
+                                            value={formCabecera.desarrollo}
+                                            onChange={e => setFormCabecera({ ...formCabecera, desarrollo: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Promoción / Etapa</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-2 border border-gray-300 rounded text-sm"
+                                            value={formCabecera.promocion}
+                                            onChange={e => setFormCabecera({ ...formCabecera, promocion: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Cliente</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-2 border border-gray-300 rounded text-sm"
+                                            value={formCabecera.cliente}
+                                            onChange={e => setFormCabecera({ ...formCabecera, cliente: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-700 mb-1">Ciudad</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-2 border border-gray-300 rounded text-sm uppercase"
+                                            value={formCabecera.ciudad}
+                                            onChange={e => setFormCabecera({ ...formCabecera, ciudad: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Fecha</label>
+                                    <input
+                                        required
+                                        type="date"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                                        value={formCabecera.fecha}
+                                        onChange={e => setFormCabecera({ ...formCabecera, fecha: e.target.value })}
+                                    />
+                                </div>
+
+                                <div className="flex justify-end gap-2 pt-2 border-t">
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalEditarPresupuesto(false)}
+                                        className="px-4 py-2 border rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-sm shadow"
+                                    >
+                                        Guardar Modificaciones
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+
+                {/* CUERPO DEL COTIZADOR */}
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                    <div className="xl:col-span-1 bg-white p-5 rounded border border-gray-200 shadow-sm self-start">
-                        <h3 className="font-bold text-gray-800 mb-3 border-b pb-2">1. Precios Base (Factura/Tramo)</h3>
-                        <p className="text-xs text-gray-500 mb-4">Captura el costo por pieza de los materiales usados en este presupuesto para detonar la fórmula de venta.</p>
-                        <div className="space-y-2">
+                    {/* PANEL IZQUIERDO: PRECIOS BASE DE MATERIALES */}
+                    <div className="xl:col-span-1 bg-white p-5 rounded-xl border border-gray-200 shadow-sm self-start">
+                        <div className="flex justify-between items-center mb-2 border-b pb-2">
+                            <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                                <span>🔩</span> 1. Precios Base (Factura / Tramo)
+                            </h3>
+                            <span className="text-[10px] text-gray-400">Guarda en automático</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-4">
+                            Costo por tramo de los perfiles usados en esta cotización para calcular la venta por kg.
+                        </p>
+                        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                             {(!presupuestoActivo.preciosMateriales || presupuestoActivo.preciosMateriales.length === 0) && (
-                                <p className="text-sm italic text-gray-400">Agrega conceptos para ver los perfiles requeridos.</p>
+                                <p className="text-xs italic text-gray-400 bg-gray-50 p-3 rounded">
+                                    Agrega conceptos al presupuesto para ver aquí los perfiles necesarios.
+                                </p>
                             )}
                             {presupuestoActivo.preciosMateriales?.map(pm => {
                                 const mat = materiales.find(m => m.id === pm.materialId);
                                 return (
-                                    <div key={pm.materialId} className="flex justify-between items-center bg-gray-50 p-2 border rounded text-sm">
-                                        <span className="font-medium text-gray-700 truncate pr-2" title={mat?.nombre}>{mat?.nombre}</span>
-                                        <div className="flex items-center gap-1 w-28">
+                                    <div key={pm.materialId} className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-200 text-xs">
+                                        <div className="pr-2 truncate">
+                                            <span className="font-bold text-gray-800 block truncate" title={mat?.nombre}>
+                                                {mat?.nombre || pm.materialId}
+                                            </span>
+                                            <span className="text-[10px] text-gray-500">
+                                                {mat?.pesoPorMetro ? `${mat.pesoPorMetro} kg/m • ` : ''}Tramo {mat?.longitudTramo || 6}m
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-1 w-28 flex-shrink-0">
                                             <span className="text-gray-500 font-bold">$</span>
-                                            <input type="number" step="0.01" className="w-full p-1 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white" value={pm.precioTramo || ""} onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))} />
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-full p-1.5 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white shadow-inner focus:ring-1 focus:ring-blue-500"
+                                                value={pm.precioTramo || ''}
+                                                onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))}
+                                                placeholder="0.00"
+                                            />
                                         </div>
                                     </div>
                                 );
@@ -271,147 +746,358 @@ export default function Presupuestos() {
                         </div>
                     </div>
 
-                    <div className="xl:col-span-2 bg-white p-5 rounded border border-gray-200 shadow-sm">
+                    {/* PANEL DERECHO: AGREGAR O MODIFICAR CONCEPTO */}
+                    <div className="xl:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                         <div className="flex justify-between items-center mb-3 border-b pb-2">
-                            <h3 className="font-bold text-gray-800">2. Agregar Concepto al Presupuesto</h3>
-                            <button onClick={() => setMostrarAltaModelo(!mostrarAltaModelo)} className="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 font-bold transition-colors">
-                                {mostrarAltaModelo ? 'Cancelar Alta' : '+ Crear Nuevo Modelo'}
-                            </button>
+                            <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                                <span>📐</span>
+                                {partidaEditandoId ? (
+                                    <span className="text-amber-700 font-extrabold">2. Modificando Concepto Seleccionado</span>
+                                ) : (
+                                    <span>2. Agregar Concepto al Presupuesto</span>
+                                )}
+                            </h3>
+                            <div className="flex gap-2">
+                                {partidaEditandoId && (
+                                    <button
+                                        type="button"
+                                        onClick={cancelarEdicionPartida}
+                                        className="text-xs bg-gray-400 hover:bg-gray-500 text-white px-3 py-1 rounded font-bold transition-colors"
+                                    >
+                                        Cancelar Edición
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setMostrarAltaModelo(!mostrarAltaModelo)}
+                                    className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700 font-bold transition-colors shadow"
+                                >
+                                    {mostrarAltaModelo ? 'Cancelar Alta' : '+ Crear Nuevo Modelo'}
+                                </button>
+                            </div>
                         </div>
-                        
+
+                        {/* ALTA RÁPIDA DE MODELO */}
                         {mostrarAltaModelo && (
-                            <div className="bg-green-50 p-4 border border-green-200 rounded mb-5 shadow-inner">
-                                <h4 className="text-sm font-bold text-green-800 mb-2 border-b border-green-200 pb-1">Alta Rápida de Modelo Estructural</h4>
-                                <input type="text" placeholder="Nombre Comercial (Ej. Puerta Louver 1x2m)" className="w-full p-2 border rounded text-sm mb-3" value={nuevoModNombre} onChange={e => setNuevoModNombre(e.target.value)} />
-                                <div className="flex gap-2 mb-2">
-                                    <select className="flex-1 p-2 border rounded text-sm" value={tempMatId} onChange={e => setTempMatId(e.target.value)}>
+                            <div className="bg-emerald-50 p-4 border border-emerald-200 rounded-lg mb-5 shadow-inner">
+                                <h4 className="text-xs font-bold text-emerald-900 mb-2 border-b border-emerald-200 pb-1">
+                                    Alta Rápida de Modelo Estructural a la Nube
+                                </h4>
+                                <input
+                                    type="text"
+                                    placeholder="Nombre Comercial (Ej. Puerta Louver 1x2m)"
+                                    className="w-full p-2 border border-emerald-300 rounded text-sm mb-3 bg-white"
+                                    value={nuevoModNombre}
+                                    onChange={e => setNuevoModNombre(e.target.value)}
+                                />
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                    <select
+                                        className="flex-1 min-w-[200px] p-2 border border-emerald-300 rounded text-sm bg-white"
+                                        value={tempMatId}
+                                        onChange={e => setTempMatId(e.target.value)}
+                                    >
                                         <option value="">Selecciona Perfil de Acero...</option>
-                                        {materiales.map(m => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+                                        {materiales.map(m => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.nombre} ({m.pesoPorMetro} kgs/ml)
+                                            </option>
+                                        ))}
                                     </select>
-                                    <input type="number" step="0.01" placeholder="Metros" className="w-24 p-2 border rounded text-sm" value={tempMatCant} onChange={e => setTempMatCant(e.target.value)} />
-                                    <button onClick={agregarInsumoAlNuevoModelo} className="bg-gray-800 text-white px-4 rounded font-bold text-sm hover:bg-gray-700">+</button>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Metros"
+                                        className="w-24 p-2 border border-emerald-300 rounded text-sm bg-white"
+                                        value={tempMatCant}
+                                        onChange={e => setTempMatCant(e.target.value)}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={agregarInsumoAlNuevoModelo}
+                                        className="bg-emerald-800 text-white px-4 rounded font-bold text-sm hover:bg-emerald-900"
+                                    >
+                                        +
+                                    </button>
                                 </div>
                                 <ul className="text-xs text-gray-700 mb-3 list-disc pl-5">
-                                    {nuevoModReceta.map((r, i) => <li key={i}>{materiales.find(m => m.id === r.materialId)?.nombre} - {r.cantidadMetros}m</li>)}
+                                    {nuevoModReceta.map((r, i) => (
+                                        <li key={i}>
+                                            {materiales.find(m => m.id === r.materialId)?.nombre} - {r.cantidadMetros} m
+                                        </li>
+                                    ))}
                                 </ul>
-                                <button onClick={guardarNuevoModelo} className="w-full bg-green-600 text-white py-2 rounded text-sm font-bold hover:bg-green-700 transition-colors shadow">
-                                    Guardar Modelo y Usar en Cotización
+                                <button
+                                    type="button"
+                                    onClick={guardarNuevoModelo}
+                                    className="w-full bg-emerald-700 text-white py-2 rounded text-xs font-bold hover:bg-emerald-800 transition-colors shadow"
+                                >
+                                    Guardar Modelo en la Nube y Usar
                                 </button>
                             </div>
                         )}
 
-                        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
-                            <div className="col-span-2">
-                                <label className="block text-xs font-bold text-gray-700 mb-1">Modelo Estructural</label>
-                                <select className="w-full p-2 border rounded text-sm bg-gray-50" value={modeloSel} onChange={e => { setModeloSel(e.target.value); setDescripcion(modelos.find(m => m.id === e.target.value)?.nombre || ''); }}>
-                                    <option value="">Selecciona modelo...</option>
-                                    {modelos.map(m => <option key={m.id} value={m.id}>{m.nombre}</option>)}
-                                </select>
+                        {/* FORMULARIO DE PARTIDA */}
+                        <div className={`p-4 rounded-lg border ${partidaEditandoId ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200'}`}>
+                            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+                                <div className="col-span-2">
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">
+                                        Modelo Estructural <span className="text-red-500">*</span>
+                                    </label>
+                                    <select
+                                        className="w-full p-2 border border-gray-300 rounded text-sm bg-white focus:ring-1 focus:ring-blue-500"
+                                        value={modeloSel}
+                                        onChange={e => {
+                                            setModeloSel(e.target.value);
+                                            const mod = modelos.find(m => m.id === e.target.value);
+                                            if (mod && !descripcion) setDescripcion(mod.nombre);
+                                        }}
+                                    >
+                                        <option value="">Selecciona modelo...</option>
+                                        {modelos.map(m => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.nombre}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Código</label>
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                                        placeholder="Ej. H-10"
+                                        value={codigo}
+                                        onChange={e => setCodigo(e.target.value)}
+                                    />
+                                </div>
+                                <div className="col-span-2 md:col-span-3">
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Descripción Comercial</label>
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                                        value={descripcion}
+                                        onChange={e => setDescripcion(e.target.value)}
+                                        placeholder="Descripción para el presupuesto..."
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Cant/Mod</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm bg-white font-bold"
+                                        value={cantidad}
+                                        onChange={e => setCantidad(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Módulos</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm bg-white font-bold"
+                                        value={modulos}
+                                        onChange={e => setModulos(e.target.value)}
+                                    />
+                                </div>
+                                <div className="border-l border-purple-200 pl-3">
+                                    <label className="block text-xs font-bold text-purple-800 mb-1">Largo (m)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        className="w-full p-2 border border-purple-300 rounded text-sm bg-white"
+                                        value={largo}
+                                        onChange={e => setLargo(e.target.value)}
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-purple-800 mb-1">Ancho (m)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        className="w-full p-2 border border-purple-300 rounded text-sm bg-white"
+                                        value={ancho}
+                                        onChange={e => setAncho(e.target.value)}
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-xs font-bold text-purple-800 mb-1">Acabado (Pintura)</label>
+                                    <select
+                                        className="w-full p-2 border border-purple-300 rounded text-sm bg-purple-50 font-semibold"
+                                        value={tipoPintura}
+                                        onChange={e => setTipoPintura(e.target.value as any)}
+                                    >
+                                        <option value="Ninguna">Sin Pintura</option>
+                                        <option value="Esmalte">Esmalte ($225.40/m²)</option>
+                                        <option value="Electroestática">Electroestática ($350.00/m²)</option>
+                                    </select>
+                                </div>
+
+                                <div className="col-span-2 md:col-span-6 flex gap-2 mt-2">
+                                    <button
+                                        type="button"
+                                        onClick={guardarPartida}
+                                        className={`flex-1 font-bold py-2.5 rounded-lg text-sm text-white shadow transition-colors ${
+                                            partidaEditandoId
+                                                ? 'bg-amber-600 hover:bg-amber-700'
+                                                : 'bg-blue-600 hover:bg-blue-700'
+                                        }`}
+                                    >
+                                        {partidaEditandoId ? '✓ Guardar Cambios de la Partida' : '+ Añadir Concepto al Presupuesto'}
+                                    </button>
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">Código</label>
-                                <input type="text" className="w-full p-2 border rounded text-sm" placeholder="Ej. H-10" value={codigo} onChange={e => setCodigo(e.target.value)} />
-                            </div>
-                            <div className="col-span-2 md:col-span-3">
-                                <label className="block text-xs font-bold text-gray-700 mb-1">Descripción Comercial</label>
-                                <input type="text" className="w-full p-2 border rounded text-sm" value={descripcion} onChange={e => setDescripcion(e.target.value)} />
-                            </div>
-                            <div><label className="block text-xs font-bold text-gray-700 mb-1">Cant/Mod</label><input type="number" className="w-full p-2 border rounded text-sm" value={cantidad} onChange={e => setCantidad(e.target.value)} /></div>
-                            <div><label className="block text-xs font-bold text-gray-700 mb-1">Módulos</label><input type="number" className="w-full p-2 border rounded text-sm" value={modulos} onChange={e => setModulos(e.target.value)} /></div>
-                            <div className="border-l pl-3"><label className="block text-xs font-bold text-purple-700 mb-1">Largo (m)</label><input type="number" step="0.01" className="w-full p-2 border border-purple-200 rounded text-sm" value={largo} onChange={e => setLargo(e.target.value)} /></div>
-                            <div><label className="block text-xs font-bold text-purple-700 mb-1">Ancho (m)</label><input type="number" step="0.01" className="w-full p-2 border border-purple-200 rounded text-sm" value={ancho} onChange={e => setAncho(e.target.value)} /></div>
-                            <div className="col-span-2"><label className="block text-xs font-bold text-purple-700 mb-1">Acabado (Pintura)</label>
-                                <select className="w-full p-2 border border-purple-200 rounded text-sm bg-purple-50" value={tipoPintura} onChange={e => setTipoPintura(e.target.value as any)}>
-                                    <option value="Ninguna">Sin Pintura</option>
-                                    <option value="Esmalte">Esmalte ($225.40/m²)</option>
-                                    <option value="Electroestática">Electroestática ($350.00/m²)</option>
-                                </select>
-                            </div>
-                            <button onClick={agregarPartida} className="col-span-2 md:col-span-6 bg-gray-900 text-white font-bold py-2 rounded shadow hover:bg-gray-800 transition-colors mt-2">Añadir Concepto</button>
                         </div>
                     </div>
                 </div>
 
-                <div className="overflow-x-auto bg-white rounded border border-gray-200 shadow-sm mt-6">
+                {/* TABLA DE PARTIDAS COTIZADAS */}
+                <div className="overflow-x-auto bg-white rounded-xl border border-gray-200 shadow-sm mt-6">
+                    <div className="p-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                        <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                            Partidas Registradas ({presupuestoActivo.partidas.length})
+                        </span>
+                        <span className="text-xs text-gray-500">
+                            Precios calculados con base en el acero y pintura
+                        </span>
+                    </div>
                     <table className="w-full text-left text-xs whitespace-nowrap">
-                        <thead className="bg-gray-100 border-b">
+                        <thead className="bg-gray-100 border-b text-gray-700">
                             <tr>
-                                <th className="p-2">Cód</th>
-                                <th className="p-2 min-w-[200px]">Descripción</th>
-                                <th className="p-2 text-center">Pzas Tot</th>
-                                <th className="p-2 text-center text-purple-800 bg-purple-50">M² Pintura</th>
-                                <th className="p-2 text-center text-yellow-800 bg-yellow-50">Kg pza</th>
-                                <th className="p-2 text-right text-gray-500">P.U. Original</th>
-                                <th className="p-2 text-right">PU. Kg Final</th>
-                                <th className="p-2 text-right bg-blue-50 text-blue-900 font-bold">P. Unit. (Pza)</th>
-                                <th className="p-2 text-right font-bold text-green-700">SUMA TOTAL</th>
-                                <th className="p-2 text-center">X</th>
+                                <th className="p-2.5">Cód</th>
+                                <th className="p-2.5 min-w-[200px]">Descripción</th>
+                                <th className="p-2.5 text-center">Pzas Tot</th>
+                                <th className="p-2.5 text-center text-purple-800 bg-purple-50">M² Pintura</th>
+                                <th className="p-2.5 text-center text-yellow-800 bg-yellow-50">Kg pza</th>
+                                <th className="p-2.5 text-right text-gray-400">P.U. Base</th>
+                                <th className="p-2.5 text-right">PU. Kg Final</th>
+                                <th className="p-2.5 text-right bg-blue-50 text-blue-900 font-bold">P. Unit. (Pza)</th>
+                                <th className="p-2.5 text-right font-bold text-emerald-700">SUMA TOTAL</th>
+                                <th className="p-2.5 text-center w-28">Acciones</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                            {presupuestoActivo.partidas.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-gray-400">Sin partidas registradas</td></tr>}
-                            {presupuestoActivo.partidas.map(p => {
-                                const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
-                                const piezasTotales = p.cantidad * p.modulos;
-                                const suma = finanzas.precioUnitarioFinal * piezasTotales;
-                                granTotal += suma;
-                                return (
-                                    <tr key={p.id} className="hover:bg-gray-50">
-                                        <td className="p-2 font-bold">{p.codigo}</td>
-                                        <td className="p-2 text-gray-700 whitespace-normal min-w-[250px] text-[11px] leading-tight">
-                                            <span className="block font-semibold mb-1">{p.descripcion}</span>
-                                            {p.tipoPintura !== 'Ninguna' && <span className="text-purple-600 font-medium block">Pintura {p.tipoPintura} ({finanzas.m2Pintura?.toFixed(2) || finanzas.m2Pintura.toFixed(2)} m²) = +${finanzas.costoPintura.toFixed(2)}/pza</span>}
-                                        </td>
-                                        <td className="p-2 text-center font-bold text-gray-900">{piezasTotales}</td>
-                                        <td className="p-2 text-center bg-purple-50/30 text-purple-700 font-medium">{finanzas.m2Pintura.toFixed(2)} m²</td>
-                                        <td className="p-2 text-center font-bold text-yellow-700 bg-yellow-50/30">{finanzas.kgTotales.toFixed(2)}</td>
-                                        <td className="p-2 text-right font-medium text-gray-400 line-through">${finanzas.precioKgCalculado.toFixed(2)}</td>
-                                        <td className="p-2 text-right font-bold text-gray-800" title={`Base acero (sin pintura): $${finanzas.precioKgFinal.toFixed(2)}`}>
-                                            ${finanzas.precioKgCliente.toFixed(2)}
-                                        </td>
-                                        <td className="p-2 text-right font-black text-blue-700 bg-blue-50/30">${finanzas.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                                        <td className="p-2 text-right font-black text-green-700 bg-green-50/20">${suma.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                                        <td className="p-2 text-center"><button onClick={() => eliminarPartida(p.id)} className="text-red-500 hover:text-red-700 font-bold px-2">X</button></td>
-                                    </tr>
-                                );
-                            })}
+                            {presupuestoActivo.partidas.length === 0 ? (
+                                <tr>
+                                    <td colSpan={10} className="p-8 text-center text-gray-400 italic">
+                                        Sin partidas agregadas. Añade conceptos arriba para armar la cotización.
+                                    </td>
+                                </tr>
+                            ) : (
+                                presupuestoActivo.partidas.map(p => {
+                                    const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
+                                    const piezasTotales = p.cantidad * p.modulos;
+                                    const suma = finanzas.precioUnitarioFinal * piezasTotales;
+                                    granTotal += suma;
+                                    const estaEditando = partidaEditandoId === p.id;
+
+                                    return (
+                                        <tr key={p.id} className={estaEditando ? 'bg-amber-100/70 font-semibold' : 'hover:bg-gray-50'}>
+                                            <td className="p-2.5 font-bold text-gray-800">{p.codigo || '-'}</td>
+                                            <td className="p-2.5 text-gray-700 whitespace-normal min-w-[240px] text-[11px] leading-tight">
+                                                <span className="block font-semibold mb-0.5">{p.descripcion}</span>
+                                                {p.tipoPintura !== 'Ninguna' && (
+                                                    <span className="text-purple-600 font-medium block text-[10px]">
+                                                        Pintura {p.tipoPintura} ({finanzas.m2Pintura.toFixed(2)} m²) = +${finanzas.costoPintura.toFixed(2)}/pza
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="p-2.5 text-center font-bold text-gray-900">{piezasTotales}</td>
+                                            <td className="p-2.5 text-center bg-purple-50/40 text-purple-700 font-medium">
+                                                {finanzas.m2Pintura.toFixed(2)} m²
+                                            </td>
+                                            <td className="p-2.5 text-center font-bold text-yellow-700 bg-yellow-50/40">
+                                                {finanzas.kgTotales.toFixed(2)}
+                                            </td>
+                                            <td className="p-2.5 text-right font-medium text-gray-400 line-through">
+                                                ${finanzas.precioKgCalculado.toFixed(2)}
+                                            </td>
+                                            <td className="p-2.5 text-right font-bold text-gray-800" title={`Base acero: $${finanzas.precioKgFinal.toFixed(2)}`}>
+                                                ${finanzas.precioKgCliente.toFixed(2)}
+                                            </td>
+                                            <td className="p-2.5 text-right font-black text-blue-700 bg-blue-50/30">
+                                                ${finanzas.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </td>
+                                            <td className="p-2.5 text-right font-black text-emerald-700 bg-emerald-50/20">
+                                                ${suma.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </td>
+                                            <td className="p-2.5 text-center space-x-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => cargarPartidaParaEditar(p)}
+                                                    className="bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold px-2 py-1 rounded text-[11px] transition-colors"
+                                                    title="Modificar esta partida"
+                                                >
+                                                    Editar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => eliminarPartida(p.id, p.descripcion)}
+                                                    className="bg-red-100 hover:bg-red-200 text-red-700 font-bold px-2 py-1 rounded text-[11px] transition-colors"
+                                                    title="Eliminar partida"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
                         </tbody>
                     </table>
                 </div>
 
+                {/* PIE FINANCIERO Y RESUMEN */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 items-center">
-                    <div className="bg-gray-100 border border-gray-300 p-4 rounded shadow-sm text-center">
-                        <span className="block text-sm font-bold text-gray-600">Promedio Base Calculado (Solo Acero):</span>
-                        <span className="block text-xl font-black text-gray-500">${promedioCalculado.toFixed(2)}/Kg</span>
+                    <div className="bg-white border border-gray-300 p-4 rounded-xl shadow-sm text-center">
+                        <span className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                            Promedio Base Calculado (Solo Acero):
+                        </span>
+                        <span className="block text-2xl font-black text-gray-700 mt-1">
+                            ${promedioCalculado.toFixed(2)} <span className="text-xs font-normal text-gray-500">/ Kg</span>
+                        </span>
                     </div>
-                    <div className="bg-blue-50 border border-blue-300 p-4 rounded shadow-sm text-center">
-                        <span className="block text-sm font-bold text-blue-800 mb-1">Ajustar Precio Base por Kg:</span>
+
+                    <div className="bg-blue-50 border border-blue-300 p-4 rounded-xl shadow-sm text-center">
+                        <span className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-1">
+                            Ajustar Precio Global por Kg:
+                        </span>
                         <div className="flex justify-center items-center gap-1">
-                            <span className="font-bold text-blue-800">$</span>
+                            <span className="font-bold text-blue-900 text-lg">$</span>
                             <input
-                                type="number" step="0.01"
-                                className="w-28 p-2 border border-blue-400 rounded text-center font-bold text-blue-900 bg-white shadow-inner"
-                                value={presupuestoActivo.precioGlobalKg || ""}
+                                type="number"
+                                step="0.01"
+                                className="w-32 p-2 border border-blue-400 rounded-lg text-center font-black text-blue-900 bg-white shadow-inner text-base"
+                                value={presupuestoActivo.precioGlobalKg || ''}
                                 onChange={e => fijarPrecioGlobalKg(Number(e.target.value))}
                                 placeholder={promedioCalculado.toFixed(2)}
                             />
                         </div>
-                        <span className="block text-[10px] text-blue-600 mt-1">Déjalo en 0 para usar los precios base individuales.</span>
+                        <span className="block text-[10px] text-blue-700 mt-1">
+                            Deja en 0 para usar los precios individuales calculados.
+                        </span>
                     </div>
-                    <div className="text-right bg-gray-900 text-white p-4 rounded shadow-lg flex flex-col justify-center">
-                        <span className="block text-sm font-bold text-gray-300 mb-1">Gran Total Cotizado:</span>
-                        <span className="block text-3xl font-black text-green-400">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+
+                    <div className="text-right bg-gray-900 text-white p-5 rounded-xl shadow-xl flex flex-col justify-center">
+                        <span className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            Gran Total Cotizado:
+                        </span>
+                        <span className="block text-3xl font-black text-emerald-400">
+                            ${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
                     </div>
                 </div>
 
-                {/* CSS OCULTO PARA LA IMPRESIÓN (PDF) */}
-                <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white">
+                {/* FORMATO OCULTO PARA IMPRESIÓN (PDF) */}
+                <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-6">
                     <style type="text/css" media="print">
                         {`@page { size: landscape; margin: 10mm; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
                     </style>
                     <div className="flex justify-between items-start mb-6">
                         <table className="text-xs">
                             <tbody>
+                                <tr><td className="font-bold pr-4">Presupuesto:</td><td className="font-bold text-base">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td></tr>
                                 <tr><td className="font-bold pr-4">Subcontrato:</td><td>HERRERÍA</td></tr>
                                 <tr><td className="font-bold pr-4">Promoción:</td><td>{presupuestoActivo.promocion}</td></tr>
                                 <tr><td className="font-bold pr-4">Desarrollo:</td><td>{presupuestoActivo.desarrollo}</td></tr>
@@ -441,7 +1127,7 @@ export default function Presupuestos() {
                             {presupuestoActivo.partidas.map(p => {
                                 const fin = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
                                 const pzas = p.cantidad * p.modulos;
-                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m² de Pintura ${p.tipoPintura})` : "";
+                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m² de Pintura ${p.tipoPintura})` : '';
                                 return (
                                     <tr key={p.id}>
                                         <td className="border border-black p-1">{p.codigo}</td>
@@ -468,31 +1154,360 @@ export default function Presupuestos() {
         );
     }
 
+    // ==========================================
+    // VISTA PRINCIPAL: LISTADO Y ALTA DE PRESUPUESTOS
+    // ==========================================
     return (
         <div className="space-y-6">
-            <div className="bg-gray-50 p-6 rounded border border-gray-200 shadow-sm">
-                <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Crear Nuevo Presupuesto</h3>
-                <form onSubmit={crearPresupuesto} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div><label className="block text-sm font-bold text-gray-700 mb-1">Promoción (Ej. 96u)</label><input required type="text" className="w-full p-2 border rounded" value={formCabecera.promocion} onChange={e => setFormCabecera({ ...formCabecera, promocion: e.target.value })} /></div>
-                    <div><label className="block text-sm font-bold text-gray-700 mb-1">Desarrollo (Ej. PAJARITOS)</label><input required type="text" className="w-full p-2 border rounded uppercase" value={formCabecera.desarrollo} onChange={e => setFormCabecera({ ...formCabecera, desarrollo: e.target.value })} /></div>
-                    <div><label className="block text-sm font-bold text-gray-700 mb-1">Ciudad</label><input required type="text" className="w-full p-2 border rounded uppercase" value={formCabecera.ciudad} onChange={e => setFormCabecera({ ...formCabecera, ciudad: e.target.value })} /></div>
-                    <div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Cotización</label><input required type="date" className="w-full p-2 border rounded text-gray-800" value={formCabecera.fecha} onChange={e => setFormCabecera({ ...formCabecera, fecha: e.target.value })} /></div>
-                    <div className="md:col-span-4 flex justify-end mt-2"><button type="submit" className="bg-blue-600 text-white font-bold py-3 px-8 rounded hover:bg-blue-700 shadow">Aperturar Formato de Cotización</button></div>
+            {/* PANEL PARA CREAR Y GUARDAR UN NUEVO PRESUPUESTO */}
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                <div className="flex justify-between items-center mb-4 border-b pb-3">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <span>📝</span> Crear y Guardar Nuevo Presupuesto
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                            Asigna un nombre al presupuesto y selecciónalo si pertenece a una obra específica.
+                        </p>
+                    </div>
+                </div>
+
+                <form onSubmit={crearPresupuesto} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                    <div className="md:col-span-5">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Nombre del Presupuesto <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            placeholder="Ej. Presupuesto Herrería 60u Tesistán"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-blue-500"
+                            value={formCabecera.nombre}
+                            onChange={e => setFormCabecera({ ...formCabecera, nombre: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-4">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Vincular con Obra (Opcional)
+                        </label>
+                        <select
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+                            value={formCabecera.obraId}
+                            onChange={e => manejarSeleccionObra(e.target.value)}
+                        >
+                            <option value="">-- Sin obra vinculada (Independiente) --</option>
+                            {obras.map(o => (
+                                <option key={o.id} value={o.id}>
+                                    {o.nombre} ({o.cliente})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Desarrollo / Proyecto <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            placeholder="Ej. TESISTÁN"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm uppercase"
+                            value={formCabecera.desarrollo}
+                            onChange={e => setFormCabecera({ ...formCabecera, desarrollo: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Promoción / Etapa <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            placeholder="Ej. 60u, Etapa 1"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
+                            value={formCabecera.promocion}
+                            onChange={e => setFormCabecera({ ...formCabecera, promocion: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Cliente <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            placeholder="Ej. GRUPO SAN CARLOS"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm"
+                            value={formCabecera.cliente}
+                            onChange={e => setFormCabecera({ ...formCabecera, cliente: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Ciudad</label>
+                        <input
+                            type="text"
+                            placeholder="Ej. ZAPOPAN"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm uppercase"
+                            value={formCabecera.ciudad}
+                            onChange={e => setFormCabecera({ ...formCabecera, ciudad: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Fecha</label>
+                        <input
+                            required
+                            type="date"
+                            className="w-full p-2.5 border border-gray-300 rounded-lg text-sm text-gray-800"
+                            value={formCabecera.fecha}
+                            onChange={e => setFormCabecera({ ...formCabecera, fecha: e.target.value })}
+                        />
+                    </div>
+
+                    <div className="md:col-span-12 flex justify-end mt-2">
+                        <button
+                            type="submit"
+                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-md transition-colors text-sm flex items-center gap-2"
+                        >
+                            <span>💾</span> Guardar y Abrir Presupuesto
+                        </button>
+                    </div>
                 </form>
             </div>
 
-            <div>
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Presupuestos Generados</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {presupuestos.length === 0 ? <p className="text-gray-500 col-span-full">No hay presupuestos registrados.</p> : presupuestos.map(p => (
-                        <div key={p.id} className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm relative hover:shadow-md transition-shadow">
-                            <h4 className="font-bold text-lg text-gray-900">{p.desarrollo}</h4>
-                            <p className="text-sm text-gray-600 mb-4">Promo: {p.promocion} | {p.fecha}</p>
-                            <button onClick={() => setPresupuestoActivo(p)} className="w-full bg-gray-900 text-white py-2 rounded text-sm hover:bg-gray-800 font-bold transition-colors">
-                                Abrir Cuadro de Precios
+            {/* MODAL PARA EDITAR DATOS GENERALES (DESDE EL LISTADO) */}
+            {modalEditarPresupuesto && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full p-6 border border-gray-200">
+                        <div className="flex justify-between items-center border-b pb-3 mb-4">
+                            <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                <span>✏️</span> Modificar Datos del Presupuesto
+                            </h3>
+                            <button
+                                onClick={() => setModalEditarPresupuesto(false)}
+                                className="text-gray-400 hover:text-gray-600 font-bold"
+                            >
+                                ✕
                             </button>
                         </div>
-                    ))}
+
+                        <form onSubmit={guardarEdicionPresupuesto} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Nombre del Presupuesto <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    required
+                                    type="text"
+                                    className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-blue-500"
+                                    value={formCabecera.nombre}
+                                    onChange={e => setFormCabecera({ ...formCabecera, nombre: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Vincular a Obra Existente (Opcional)
+                                </label>
+                                <select
+                                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                                    value={formCabecera.obraId}
+                                    onChange={e => manejarSeleccionObra(e.target.value)}
+                                >
+                                    <option value="">-- Sin obra vinculada (Independiente) --</option>
+                                    {obras.map(o => (
+                                        <option key={o.id} value={o.id}>
+                                            {o.nombre} ({o.cliente})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Desarrollo / Proyecto</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm uppercase"
+                                        value={formCabecera.desarrollo}
+                                        onChange={e => setFormCabecera({ ...formCabecera, desarrollo: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Promoción / Etapa</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                                        value={formCabecera.promocion}
+                                        onChange={e => setFormCabecera({ ...formCabecera, promocion: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Cliente</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                                        value={formCabecera.cliente}
+                                        onChange={e => setFormCabecera({ ...formCabecera, cliente: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Ciudad</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-2 border border-gray-300 rounded text-sm uppercase"
+                                        value={formCabecera.ciudad}
+                                        onChange={e => setFormCabecera({ ...formCabecera, ciudad: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Fecha</label>
+                                <input
+                                    required
+                                    type="date"
+                                    className="w-full p-2 border border-gray-300 rounded text-sm"
+                                    value={formCabecera.fecha}
+                                    onChange={e => setFormCabecera({ ...formCabecera, fecha: e.target.value })}
+                                />
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t">
+                                <button
+                                    type="button"
+                                    onClick={() => setModalEditarPresupuesto(false)}
+                                    className="px-4 py-2 border rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-sm shadow"
+                                >
+                                    Guardar Modificaciones
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* LISTADO DE PRESUPUESTOS GUARDADOS */}
+            <div>
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <span>📂</span> Presupuestos Guardados en la Nube ({presupuestos.length})
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                            Selecciona cualquier presupuesto para abrirlo, modificarlo o eliminarlo.
+                        </p>
+                    </div>
+
+                    <input
+                        type="text"
+                        placeholder="🔍 Buscar presupuesto por nombre, cliente..."
+                        className="p-2 px-3 border border-gray-300 rounded-lg text-xs w-72 bg-white"
+                        value={busqueda}
+                        onChange={e => setBusqueda(e.target.value)}
+                    />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {presupuestosFiltrados.length === 0 ? (
+                        <div className="col-span-full bg-white p-12 text-center rounded-xl border border-dashed border-gray-300 text-gray-400">
+                            {presupuestos.length === 0
+                                ? 'No hay presupuestos guardados aún. Llena el formulario superior para crear el primero.'
+                                : 'No se encontraron presupuestos que coincidan con la búsqueda.'}
+                        </div>
+                    ) : (
+                        presupuestosFiltrados.map(p => {
+                            const totalEstimado = calcularTotalPresupuesto(p);
+                            const obraVinculada = obras.find(o => o.id === p.obraId);
+
+                            return (
+                                <div
+                                    key={p.id}
+                                    className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                                >
+                                    <div>
+                                        <div className="flex justify-between items-start gap-2 mb-2">
+                                            <h4 className="font-extrabold text-base text-gray-900 leading-snug">
+                                                {p.nombre || p.desarrollo}
+                                            </h4>
+                                            <span className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold whitespace-nowrap">
+                                                {p.partidas?.length || 0} ptds
+                                            </span>
+                                        </div>
+
+                                        <p className="text-xs text-gray-600 mb-1">
+                                            <strong>Cliente:</strong> {p.cliente || 'Sin cliente'}
+                                        </p>
+                                        <p className="text-xs text-gray-500 mb-1">
+                                            <strong>Desarrollo:</strong> {p.desarrollo} {p.promocion ? `(${p.promocion})` : ''}
+                                        </p>
+                                        <p className="text-[11px] text-gray-400 mb-3">
+                                            Fecha: {p.fecha}
+                                        </p>
+
+                                        {obraVinculada && (
+                                            <div className="mb-3 bg-gray-50 p-1.5 px-2.5 rounded border border-gray-200 text-[11px] text-blue-700 font-semibold flex items-center gap-1.5">
+                                                <span>🏗️</span>
+                                                <span className="truncate">Obra: {obraVinculada.nombre}</span>
+                                            </div>
+                                        )}
+
+                                        <div className="bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-200/60 mb-4 flex justify-between items-center">
+                                            <span className="text-xs text-emerald-800 font-medium">Total Estimado:</span>
+                                            <span className="text-base font-black text-emerald-700">
+                                                ${totalEstimado.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2 pt-2 border-t border-gray-100">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPresupuestoActivo(p)}
+                                            className="w-full bg-gray-900 hover:bg-gray-800 text-white py-2.5 rounded-lg text-xs font-bold transition-colors shadow flex items-center justify-center gap-2"
+                                        >
+                                            <span>📂</span> Abrir Cuadro de Precios
+                                        </button>
+
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => abrirEdicionPresupuesto(p)}
+                                                className="bg-yellow-50 hover:bg-yellow-100 text-yellow-800 border border-yellow-200 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1"
+                                                title="Cambiar nombre, obra vinculada o datos"
+                                            >
+                                                <span>✏️</span> Editar
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => eliminarPresupuesto(p.id, p.nombre || p.desarrollo)}
+                                                className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1"
+                                                title="Borrar presupuesto"
+                                            >
+                                                <span>🗑️</span> Borrar
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
                 </div>
             </div>
         </div>

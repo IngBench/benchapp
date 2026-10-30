@@ -4,21 +4,21 @@ import { db } from '../firebase';
 import type { Material } from '../types';
 
 export default function CatalogoMateriales() {
-    // MATERIALES AHORA VIENEN DE LA NUBE EN TIEMPO REAL
     const [materiales, setMateriales] = useState<Material[]>([]);
+    const [busqueda, setBusqueda] = useState('');
 
-    // Estado para altas nuevas (Formulario superior)
-    const [nuevo, setNuevo] = useState({ nombre: "", pesoPorMetro: "", costoPorMetro: "", longitudTramo: '6' });
+    // Estado para altas nuevas (Formulario individual)
+    const [nuevo, setNuevo] = useState({ nombre: '', pesoPorMetro: '', costoPorMetro: '0', longitudTramo: '6' });
 
     // Estados para la carga masiva desde Excel
     const [mostrarCarga, setMostrarCarga] = useState(false);
-    const [textoExcel, setTextoExcel] = useState("");
+    const [textoExcel, setTextoExcel] = useState('');
 
-    // Estados exclusivos para la edición en línea (misma fila)
-    const [editandold, setEditandold] = useState<string | null>(null);
-    const [datosFila, setDatosFila] = useState({ nombre: "", longitudTramo: '6', pesoPorMetro: "" });
+    // Estados para la edición en línea
+    const [editandoId, setEditandoId] = useState<string | null>(null);
+    const [datosFila, setDatosFila] = useState({ nombre: '', longitudTramo: '6', pesoPorMetro: '' });
 
-    // VIGILANTE DE FIREBASE: Escucha el catálogo de materiales en tiempo real
+    // Escucha en tiempo real de Firebase
     useEffect(() => {
         const desuscribir = onSnapshot(collection(db, 'materiales'), (snapshot) => {
             const materialesData = snapshot.docs.map(doc => doc.data() as Material);
@@ -27,28 +27,33 @@ export default function CatalogoMateriales() {
         return () => desuscribir();
     }, []);
 
-    // FUNCIÓN MIGRADA A NUBE: Guardar ALTA NUEVA (Registro Individual)
+    // Guardar alta individual
     const guardarNuevo = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!nuevo.nombre.trim() || !nuevo.pesoPorMetro) {
+            alert('Por favor ingresa el nombre del perfil y su peso en kgs/ml.');
+            return;
+        }
+
         const nuevoId = Date.now().toString();
         const mat: Material = {
             id: nuevoId,
-            nombre: nuevo.nombre,
+            nombre: nuevo.nombre.trim(),
             pesoPorMetro: Number(nuevo.pesoPorMetro),
-            costoPorMetro: Number(nuevo.costoPorMetro),
-            longitudTramo: Number(nuevo.longitudTramo)
+            costoPorMetro: Number(nuevo.costoPorMetro) || 0,
+            longitudTramo: Number(nuevo.longitudTramo) || 6
         };
 
         try {
             await setDoc(doc(db, 'materiales', nuevoId), mat);
-            setNuevo({ nombre: "", pesoPorMetro: "", costoPorMetro: "", longitudTramo: '6' });
+            setNuevo({ nombre: '', pesoPorMetro: '', costoPorMetro: '0', longitudTramo: '6' });
         } catch (error) {
-            console.error("Error al registrar material en la nube:", error);
-            alert("No se pudo guardar el material en el servidor.");
+            console.error('Error al registrar material en la nube:', error);
+            alert('No se pudo guardar el material en el servidor.');
         }
     };
 
-    // FUNCIÓN MIGRADA A NUBE: Carga masiva
+    // Procesar carga masiva de Excel (Perfil | kgs/ml)
     const procesarCargaMasiva = async () => {
         if (!textoExcel.trim()) return;
         const lineas = textoExcel.trim().split('\n');
@@ -59,12 +64,12 @@ export default function CatalogoMateriales() {
             for (let index = 0; index < lineas.length; index++) {
                 const linea = lineas[index];
                 const columnas = linea.split('\t');
-                if (columnas.length >= 2) {
+                if (columnas.length >= 2 && columnas[0].trim()) {
                     const nuevoId = `${Date.now()}-${index}`;
                     const perfil: Material = {
                         id: nuevoId,
                         nombre: columnas[0].trim(),
-                        pesoPorMetro: Number(columnas[1].trim()) || 0,
+                        pesoPorMetro: Number(columnas[1].trim().replace(',', '.')) || 0,
                         costoPorMetro: 0,
                         longitudTramo: 6
                     };
@@ -75,164 +80,285 @@ export default function CatalogoMateriales() {
                 }
             }
 
-            setTextoExcel("");
+            setTextoExcel('');
             setMostrarCarga(false);
-            alert(`Se cargaron ${agregadosCount} perfiles estructurales al catálogo en la nube.`);
+            alert(`Se cargaron ${agregadosCount} perfiles exitosamente.`);
             if (errores > 0) {
-                alert(`Hubo ${errores} filas que no se pudieron leer. Asegúrate de copiar solo 2 columnas (Nombre y Peso).`);
+                alert(`Hubo ${errores} filas que no se pudieron procesar. Verifica que tengan 2 columnas (Perfil y kgs/ml).`);
             }
         } catch (error) {
-            console.error("Error en carga masiva:", error);
-            alert("Ocurrió un error al procesar la carga masiva en el servidor.");
+            console.error('Error en carga masiva:', error);
+            alert('Ocurrió un error al procesar la carga masiva.');
         }
     };
 
-    // FUNCIÓN MIGRADA A NUBE: Eliminar material
-    const eliminarMaterial = async (id: string) => {
-        if (confirm('¿Seguro que deseas dar de baja este perfil del catálogo general?')) {
+    // Eliminar material
+    const eliminarMaterial = async (id: string, nombreMat: string) => {
+        if (confirm(`¿Estás seguro de eliminar el perfil "${nombreMat}" del catálogo?`)) {
             try {
                 await deleteDoc(doc(db, 'materiales', id));
-                if (editandold === id) setEditandold(null);
+                if (editandoId === id) setEditandoId(null);
             } catch (error) {
-                console.error("Error al eliminar material:", error);
-                alert("No se pudo eliminar el registro del servidor.");
+                console.error('Error al eliminar material:', error);
+                alert('No se pudo eliminar el registro.');
             }
         }
     };
 
-    // --- FUNCIONES DE EDICIÓN EN LÍNEA
+    // Iniciar edición en línea
     const iniciarEdicionFila = (mat: Material) => {
-        setEditandold(mat.id);
+        setEditandoId(mat.id);
         setDatosFila({
             nombre: mat.nombre,
-            longitudTramo: mat.longitudTramo.toString(),
-            pesoPorMetro: mat.pesoPorMetro.toString()
+            longitudTramo: (mat.longitudTramo || 6).toString(),
+            pesoPorMetro: (mat.pesoPorMetro || 0).toString()
         });
     };
 
+    // Guardar edición
     const guardarEdicionFila = async (id: string) => {
         try {
             await updateDoc(doc(db, 'materiales', id), {
-                nombre: datosFila.nombre,
-                longitudTramo: Number(datosFila.longitudTramo),
-                pesoPorMetro: Number(datosFila.pesoPorMetro)
+                nombre: datosFila.nombre.trim(),
+                longitudTramo: Number(datosFila.longitudTramo) || 6,
+                pesoPorMetro: Number(datosFila.pesoPorMetro) || 0
             });
-            setEditandold(null);
+            setEditandoId(null);
         } catch (error) {
-            console.error("Error al actualizar material en línea:", error);
-            alert("No se pudieron guardar los cambios en el servidor.");
+            console.error('Error al actualizar material:', error);
+            alert('No se pudieron guardar los cambios.');
         }
     };
 
+    // Filtrar materiales por búsqueda
+    const materialesFiltrados = materiales.filter(m =>
+        m.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    );
+
     return (
         <div className="space-y-6">
-            {/* Controles Superiores */}
-            <div className="flex justify-between items-center bg-white p-4 rounded border border-gray-200 shadow-sm">
-                <h3 className="font-bold text-gray-800 text-lg">Catálogo General de Acero</h3>
-                <button
-                    onClick={() => setMostrarCarga(!mostrarCarga)}
-                    className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-sm shadow"
-                >
-                    {mostrarCarga ? 'Ocultar Carga Masiva' : 'Importar desde Excel'}
-                </button>
+            {/* Cabecera y acciones */}
+            <div className="flex flex-wrap justify-between items-center gap-3 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                <div>
+                    <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+                        <span>🔩</span> Catálogo de Materiales y Perfiles
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                        {materiales.length} perfiles disponibles para recetas de herrería y almacén
+                    </p>
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setMostrarCarga(!mostrarCarga)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm font-bold shadow flex items-center gap-1 transition-colors"
+                    >
+                        <span>📊</span>
+                        {mostrarCarga ? 'Ocultar Carga Masiva' : 'Importar desde Excel'}
+                    </button>
+                </div>
             </div>
 
             {/* Panel de Carga Masiva */}
             {mostrarCarga && (
-                <div className="bg-green-50 p-4 rounded border border-green-200 shadow-inner">
-                    <h4 className="font-bold text-green-800 mb-2">Carga Masiva de Perfiles</h4>
-                    <p className="text-sm text-green-700 mb-3">Copia las celdas directamente desde tu Excel y pégalas aquí. <strong>Solo 2 columnas (Nombre | Peso).</strong></p>
-                    <textarea className="w-full h-40 p-3 border border-green-300 rounded text-sm mb-3 shadow-sm" value={textoExcel} onChange={(e) => setTextoExcel(e.target.value)}></textarea>
-                    <button onClick={procesarCargaMasiva} className="w-full bg-green-700 text-white font-bold py-2 rounded hover:bg-green-800">Procesar y Guardar Perfiles</button>
+                <div className="bg-emerald-50 p-5 rounded-lg border border-emerald-200 shadow-inner">
+                    <h4 className="font-bold text-emerald-900 mb-1">Carga Masiva de Perfiles desde Excel</h4>
+                    <p className="text-xs text-emerald-700 mb-3">
+                        Copia las dos columnas directamente de Excel y pégalas aquí: <strong>Columna 1: Perfil | Columna 2: kgs/ml</strong>
+                    </p>
+                    <textarea
+                        className="w-full h-36 p-3 border border-emerald-300 rounded font-mono text-xs mb-3 bg-white shadow-sm"
+                        placeholder="Ejemplo:&#10;PTR 2x2 Cal 14&#9;3.55&#10;Ángulo 1 1/2 x 1/8&#9;1.83"
+                        value={textoExcel}
+                        onChange={(e) => setTextoExcel(e.target.value)}
+                    />
+                    <button
+                        type="button"
+                        onClick={procesarCargaMasiva}
+                        className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2 px-6 rounded text-sm shadow transition-colors"
+                    >
+                        Procesar y Guardar Perfiles en la Nube
+                    </button>
                 </div>
             )}
 
-            {/* Formulario Individual (Solo para Altas Nuevas) */}
-            <div className="bg-gray-50 p-4 rounded border border-gray-200">
-                <h4 className="font-bold text-gray-800 mb-3">Alta / Registro Individual</h4>
-                <form onSubmit={guardarNuevo} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            {/* Formulario de Alta Individual */}
+            <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
+                <h4 className="font-bold text-gray-800 mb-3 text-sm flex items-center gap-2">
+                    <span>➕</span> Añadir Nuevo Material al Catálogo
+                </h4>
+                <form onSubmit={guardarNuevo} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                    <div className="md:col-span-5">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Perfil <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            placeholder="Ej. PTR 2x2 Cal 14, Tubo 1 1/2..."
+                            className="w-full p-2 border border-gray-300 rounded text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            value={nuevo.nombre}
+                            onChange={e => setNuevo({ ...nuevo, nombre: e.target.value })}
+                        />
+                    </div>
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            kgs/ml <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            required
+                            type="number"
+                            step="0.001"
+                            placeholder="Ej. 3.55"
+                            className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-blue-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            value={nuevo.pesoPorMetro}
+                            onChange={e => setNuevo({ ...nuevo, pesoPorMetro: e.target.value })}
+                        />
+                    </div>
                     <div className="md:col-span-2">
-                        <label className="block text-sm font-bold text-gray-700 mb-1">Perfil / Insumo</label>
-                        <input required type="text" className="w-full p-2 border rounded" value={nuevo.nombre} onChange={e => setNuevo({ ...nuevo, nombre: e.target.value })} />
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Longitud Tramo (m)
+                        </label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            className="w-full p-2 border border-gray-300 rounded text-sm"
+                            value={nuevo.longitudTramo}
+                            onChange={e => setNuevo({ ...nuevo, longitudTramo: e.target.value })}
+                        />
                     </div>
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-1">Longitud Venta (m)</label>
-                        <input required type="number" step="0.01" className="w-full p-2 border rounded" value={nuevo.longitudTramo} onChange={e => setNuevo({ ...nuevo, longitudTramo: e.target.value })} title="6 para tramos estándar, 1 para venta por metro lineal" />
+                    <div className="md:col-span-2">
+                        <button
+                            type="submit"
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm shadow transition-colors"
+                        >
+                            + Guardar Perfil
+                        </button>
                     </div>
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-1">Peso (kg/m)</label>
-                        <input required type="number" step="0.01" className="w-full p-2 border rounded" value={nuevo.pesoPorMetro} onChange={e => setNuevo({ ...nuevo, pesoPorMetro: e.target.value })} />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-1">Costo Base ($/m)</label>
-                        <input required type="number" step="0.01" className="w-full p-2 border rounded" value={nuevo.costoPorMetro} onChange={e => setNuevo({ ...nuevo, costoPorMetro: e.target.value })} />
-                    </div>
-                    <button type="submit" className="md:col-span-5 bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 shadow">
-                        Registrar Material Individual
-                    </button>
                 </form>
             </div>
 
-            {/* Tabla de Catálogo con Edición en Línea */}
-            <div className="overflow-x-auto">
-                <table className="w-full text-left bg-white border border-gray-200 rounded text-sm">
-                    <thead className="bg-gray-100">
-                        <tr>
-                            <th className="p-3 border-b">Perfil/Insumo</th>
-                            <th className="p-3 border-b text-center">Presentación (Longitud)</th>
-                            <th className="p-3 border-b text-center">Peso (kg/m)</th>
-                            <th className="p-3 border-b text-center w-40">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                        {materiales.length === 0 && (
-                            <tr><td colSpan={4} className="p-4 text-center text-gray-500">Catálogo vacío. Registra o importa perfiles.</td></tr>
-                        )}
-                        {materiales.map(m => (
-                            <tr key={m.id} className={editandold === m.id ? 'bg-yellow-50' : 'hover:bg-gray-50'}>
-                                {editandold === m.id ? (
-                                    <>
-                                        <td className="p-2">
-                                            <input type="text" className="w-full p-2 border border-yellow-400 rounded bg-white shadow-sm font-bold text-gray-800" value={datosFila.nombre} onChange={e => setDatosFila({ ...datosFila, nombre: e.target.value })} />
-                                        </td>
-                                        <td className="p-2">
-                                            <div className="flex justify-center items-center gap-1">
-                                                <span className="text-gray-500">Tramo</span>
-                                                <input type="number" step="0.01" className="w-20 p-2 border border-yellow-400 rounded text-center bg-white shadow-sm font-bold text-blue-700" value={datosFila.longitudTramo} onChange={e => setDatosFila({ ...datosFila, longitudTramo: e.target.value })} />
-                                                <span className="text-gray-500">m</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-2">
-                                            <input type="number" step="0.01" className="w-full p-2 border border-yellow-400 rounded text-center bg-white shadow-sm font-bold text-gray-800" value={datosFila.pesoPorMetro} onChange={e => setDatosFila({ ...datosFila, pesoPorMetro: e.target.value })} />
-                                        </td>
-                                        <td className="p-2 text-center space-x-1">
-                                            <button onClick={() => guardarEdicionFila(m.id)} className="bg-green-600 text-white hover:bg-green-700 px-3 py-1.5 rounded font-bold shadow-sm">
-                                                Guardar
-                                            </button>
-                                            <button onClick={() => setEditandold(null)} className="bg-gray-500 text-white hover:bg-gray-600 px-2 py-1.5 rounded font-bold shadow-sm">
-                                                X
-                                            </button>
-                                        </td>
-                                    </>
-                                ) : (
-                                    <>
-                                        <td className="p-3 font-medium text-gray-800">{m.nombre}</td>
-                                        <td className="p-3 text-center text-gray-600">Tramo de {m.longitudTramo || 6}m</td>
-                                        <td className="p-3 text-center font-bold text-gray-700">{m.pesoPorMetro}</td>
-                                        <td className="p-3 text-center space-x-2">
-                                            <button onClick={() => iniciarEdicionFila(m)} className="bg-blue-100 text-blue-700 hover:bg-blue-200 px-3 py-1 rounded font-bold transition-colors">
-                                                Editar
-                                            </button>
-                                            <button onClick={() => eliminarMaterial(m.id)} className="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1 rounded font-bold transition-colors" title="Eliminar perfil">
-                                                X
-                                            </button>
-                                        </td>
-                                    </>
-                                )}
+            {/* Buscador y Tabla */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div className="p-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between gap-4">
+                    <span className="text-xs font-bold uppercase tracking-wider text-gray-600">
+                        Lista de Perfiles Registrados
+                    </span>
+                    <input
+                        type="text"
+                        placeholder="🔍 Buscar por nombre de perfil..."
+                        className="p-1.5 px-3 border border-gray-300 rounded text-xs w-64 bg-white"
+                        value={busqueda}
+                        onChange={e => setBusqueda(e.target.value)}
+                    />
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-100 text-gray-700 uppercase text-xs font-bold">
+                            <tr>
+                                <th className="p-3 border-b">Perfil</th>
+                                <th className="p-3 border-b text-center">kgs/ml</th>
+                                <th className="p-3 border-b text-center">Presentación</th>
+                                <th className="p-3 border-b text-center w-36">Acciones</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {materialesFiltrados.length === 0 ? (
+                                <tr>
+                                    <td colSpan={4} className="p-8 text-center text-gray-400 italic">
+                                        {materiales.length === 0
+                                            ? 'No hay perfiles registrados en el catálogo. Añade uno arriba o importa desde Excel.'
+                                            : 'No se encontraron perfiles con esa búsqueda.'}
+                                    </td>
+                                </tr>
+                            ) : (
+                                materialesFiltrados.map(m => (
+                                    <tr key={m.id} className={editandoId === m.id ? 'bg-yellow-50' : 'hover:bg-gray-50'}>
+                                        {editandoId === m.id ? (
+                                            <>
+                                                <td className="p-2">
+                                                    <input
+                                                        type="text"
+                                                        className="w-full p-2 border border-yellow-400 rounded bg-white shadow-sm font-bold text-gray-800"
+                                                        value={datosFila.nombre}
+                                                        onChange={e => setDatosFila({ ...datosFila, nombre: e.target.value })}
+                                                    />
+                                                </td>
+                                                <td className="p-2">
+                                                    <input
+                                                        type="number"
+                                                        step="0.001"
+                                                        className="w-full p-2 border border-yellow-400 rounded text-center bg-white shadow-sm font-bold text-blue-700"
+                                                        value={datosFila.pesoPorMetro}
+                                                        onChange={e => setDatosFila({ ...datosFila, pesoPorMetro: e.target.value })}
+                                                    />
+                                                </td>
+                                                <td className="p-2">
+                                                    <div className="flex justify-center items-center gap-1">
+                                                        <input
+                                                            type="number"
+                                                            step="0.1"
+                                                            className="w-20 p-2 border border-yellow-400 rounded text-center bg-white shadow-sm text-gray-700"
+                                                            value={datosFila.longitudTramo}
+                                                            onChange={e => setDatosFila({ ...datosFila, longitudTramo: e.target.value })}
+                                                        />
+                                                        <span className="text-xs text-gray-500">m</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-2 text-center space-x-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => guardarEdicionFila(m.id)}
+                                                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-xs shadow-sm"
+                                                    >
+                                                        Guardar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setEditandoId(null)}
+                                                        className="bg-gray-400 hover:bg-gray-500 text-white px-2 py-1.5 rounded font-bold text-xs shadow-sm"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="p-3 font-bold text-gray-800">
+                                                    {m.nombre}
+                                                </td>
+                                                <td className="p-3 text-center font-bold text-blue-700 bg-blue-50/50">
+                                                    {m.pesoPorMetro} <span className="text-xs text-gray-500 font-normal">kg/m</span>
+                                                </td>
+                                                <td className="p-3 text-center text-gray-600">
+                                                    Tramo {m.longitudTramo || 6} m
+                                                </td>
+                                                <td className="p-3 text-center space-x-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => iniciarEdicionFila(m)}
+                                                        className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
+                                                    >
+                                                        Editar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => eliminarMaterial(m.id, m.nombre)}
+                                                        className="bg-red-50 text-red-600 hover:bg-red-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
+                                                        title="Eliminar perfil"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </td>
+                                            </>
+                                        )}
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     );
