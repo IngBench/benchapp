@@ -45,6 +45,16 @@ export default function Presupuestos() {
     const [tempMatId, setTempMatId] = useState('');
     const [tempMatCant, setTempMatCant] = useState('');
 
+    // Edición de modelo estructural desde Presupuestos
+    const [modalEditarModelo, setModalEditarModelo] = useState(false);
+    const [modeloEnEdicion, setModeloEnEdicion] = useState<{
+        id: string;
+        nombre: string;
+        receta: MaterialRequerido[];
+    } | null>(null);
+    const [nuevoInsumoMatId, setNuevoInsumoMatId] = useState('');
+    const [nuevoInsumoMetros, setNuevoInsumoMetros] = useState('');
+
     // Búsqueda en listado
     const [busqueda, setBusqueda] = useState('');
 
@@ -238,6 +248,395 @@ export default function Presupuestos() {
             console.error('Error al guardar modelo en la nube:', error);
             alert('Error al guardar modelo.');
         }
+    };
+
+    // ABRIR EDITOR DE MODELO ESTRUCTURAL
+    const abrirEditorModelo = (modeloId?: string) => {
+        const idParaAbrir = modeloId || modeloSel || (modelos.length > 0 ? modelos[0].id : '');
+        if (!idParaAbrir) {
+            alert('No hay modelos de herrería disponibles para editar.');
+            return;
+        }
+        const mod = modelos.find(m => m.id === idParaAbrir);
+        if (!mod) {
+            alert('No se encontró el modelo seleccionado.');
+            return;
+        }
+        setModeloEnEdicion({
+            id: mod.id,
+            nombre: mod.nombre,
+            receta: mod.receta.map(r => ({ ...r }))
+        });
+        setNuevoInsumoMatId('');
+        setNuevoInsumoMetros('');
+        setModalEditarModelo(true);
+    };
+
+    // CAMBIAR MODELO EN EL SELECTOR DEL MODAL
+    const cambiarModeloEnEdicion = (nuevoId: string) => {
+        const mod = modelos.find(m => m.id === nuevoId);
+        if (mod) {
+            setModeloEnEdicion({
+                id: mod.id,
+                nombre: mod.nombre,
+                receta: mod.receta.map(r => ({ ...r }))
+            });
+            setNuevoInsumoMatId('');
+            setNuevoInsumoMetros('');
+        }
+    };
+
+    // CAMBIAR MATERIAL / PERFIL DE UN INSUMO EN LA RECETA
+    const cambiarMaterialInsumo = (index: number, nuevoMaterialId: string) => {
+        if (!modeloEnEdicion) return;
+        const nuevaReceta = [...modeloEnEdicion.receta];
+        nuevaReceta[index] = {
+            ...nuevaReceta[index],
+            materialId: nuevoMaterialId
+        };
+        setModeloEnEdicion({
+            ...modeloEnEdicion,
+            receta: nuevaReceta
+        });
+    };
+
+    // CAMBIAR METROS LINEALES DE UN INSUMO EN LA RECETA
+    const cambiarMetrosInsumo = (index: number, metros: number) => {
+        if (!modeloEnEdicion) return;
+        const nuevaReceta = [...modeloEnEdicion.receta];
+        nuevaReceta[index] = {
+            ...nuevaReceta[index],
+            cantidadMetros: metros
+        };
+        setModeloEnEdicion({
+            ...modeloEnEdicion,
+            receta: nuevaReceta
+        });
+    };
+
+    // ELIMINAR INSUMO DE LA RECETA
+    const eliminarInsumoDeModelo = (index: number) => {
+        if (!modeloEnEdicion) return;
+        if (modeloEnEdicion.receta.length <= 1) {
+            alert('El modelo debe conservar al menos un perfil de acero.');
+            return;
+        }
+        const nuevaReceta = modeloEnEdicion.receta.filter((_, i) => i !== index);
+        setModeloEnEdicion({
+            ...modeloEnEdicion,
+            receta: nuevaReceta
+        });
+    };
+
+    // AGREGAR NUEVO INSUMO A LA RECETA
+    const agregarInsumoAModeloEnEdicion = () => {
+        if (!modeloEnEdicion) return;
+        if (!nuevoInsumoMatId) {
+            alert('Por favor selecciona un perfil del catálogo.');
+            return;
+        }
+        const cant = Number(nuevoInsumoMetros);
+        if (isNaN(cant) || cant <= 0) {
+            alert('Ingresa una cantidad de metros mayor a 0.');
+            return;
+        }
+
+        setModeloEnEdicion({
+            ...modeloEnEdicion,
+            receta: [
+                ...modeloEnEdicion.receta,
+                { materialId: nuevoInsumoMatId, cantidadMetros: cant }
+            ]
+        });
+        setNuevoInsumoMatId('');
+        setNuevoInsumoMetros('');
+    };
+
+    // GUARDAR CAMBIOS DEL MODELO EN LA NUBE
+    const guardarCambiosModelo = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if (!modeloEnEdicion) return;
+
+        if (!modeloEnEdicion.nombre.trim()) {
+            alert('El modelo debe tener un nombre.');
+            return;
+        }
+        if (modeloEnEdicion.receta.length === 0) {
+            alert('El modelo debe incluir al menos un material de acero.');
+            return;
+        }
+
+        for (const item of modeloEnEdicion.receta) {
+            if (!item.materialId) {
+                alert('Todos los insumos deben tener un material asignado.');
+                return;
+            }
+            if (item.cantidadMetros <= 0) {
+                alert('La cantidad de metros de cada perfil debe ser mayor a 0.');
+                return;
+            }
+        }
+
+        try {
+            // Guardar modelo en Firestore
+            await updateDoc(doc(db, 'modelos', modeloEnEdicion.id), {
+                nombre: modeloEnEdicion.nombre.trim(),
+                receta: modeloEnEdicion.receta
+            });
+
+            // Si hay un presupuesto activo, asegurar que los nuevos materiales aparezcan en preciosMateriales
+            if (presupuestoActivo) {
+                const nuevosPrecios = [...(presupuestoActivo.preciosMateriales || [])];
+                let huboNuevos = false;
+
+                modeloEnEdicion.receta.forEach(item => {
+                    if (!nuevosPrecios.some(p => p.materialId === item.materialId)) {
+                        nuevosPrecios.push({ materialId: item.materialId, precioTramo: 0 });
+                        huboNuevos = true;
+                    }
+                });
+
+                if (huboNuevos) {
+                    await updateDoc(doc(db, 'presupuestos', presupuestoActivo.id), {
+                        preciosMateriales: nuevosPrecios
+                    });
+                }
+            }
+
+            setModalEditarModelo(false);
+            setModeloEnEdicion(null);
+            alert('¡Modelo actualizado exitosamente! Los cálculos y precios de las partidas se han recalculado en tiempo real.');
+        } catch (error) {
+            console.error('Error al actualizar el modelo:', error);
+            alert('Error al guardar los cambios del modelo.');
+        }
+    };
+
+    // MODAL DE EDICIÓN DE INSUMOS DEL MODELO
+    const renderModalEditarModelo = () => {
+        if (!modalEditarModelo || !modeloEnEdicion) return null;
+
+        const totalMetrosModelo = modeloEnEdicion.receta.reduce((acc, r) => acc + (Number(r.cantidadMetros) || 0), 0);
+        const totalKgModelo = modeloEnEdicion.receta.reduce((acc, r) => {
+            const mat = materiales.find(m => m.id === r.materialId);
+            return acc + ((Number(r.cantidadMetros) || 0) * (mat?.pesoPorMetro || 0));
+        }, 0);
+
+        return (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+                <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-6 border border-gray-200 my-8">
+                    <div className="flex justify-between items-center border-b pb-3 mb-4">
+                        <div>
+                            <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                <span>📐</span> Editar Insumos del Modelo
+                            </h3>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                                Modifica los perfiles de acero y los metros lineales requeridos por este modelo.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setModalEditarModelo(false);
+                                setModeloEnEdicion(null);
+                            }}
+                            className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                        >
+                            ✕
+                        </button>
+                    </div>
+
+                    <form onSubmit={guardarCambiosModelo} className="space-y-5">
+                        {/* Selector de modelo a editar y nombre */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Modelo a Editar:
+                                </label>
+                                <select
+                                    className="w-full p-2 border border-gray-300 rounded-lg text-xs bg-white font-medium"
+                                    value={modeloEnEdicion.id}
+                                    onChange={e => cambiarModeloEnEdicion(e.target.value)}
+                                >
+                                    {modelos.map(m => (
+                                        <option key={m.id} value={m.id}>
+                                            {m.nombre}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Nombre del Modelo: <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    className="w-full p-2 border border-gray-300 rounded-lg text-xs bg-white font-bold text-gray-800"
+                                    value={modeloEnEdicion.nombre}
+                                    onChange={e => setModeloEnEdicion({ ...modeloEnEdicion, nombre: e.target.value })}
+                                    placeholder="Nombre del modelo..."
+                                />
+                            </div>
+                        </div>
+
+                        {/* Listado de insumos actuales */}
+                        <div>
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                    <span>🔩</span> Lista de Materiales / Perfiles ({modeloEnEdicion.receta.length})
+                                </label>
+                                <span className="text-[11px] text-gray-500">
+                                    Cambia el perfil o ajusta la cantidad de metros
+                                </span>
+                            </div>
+
+                            <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-gray-100 border-b text-gray-700">
+                                        <tr>
+                                            <th className="p-2.5">Perfil de Acero (Material)</th>
+                                            <th className="p-2.5 text-center w-28">Metros (ml)</th>
+                                            <th className="p-2.5 text-center w-24">Peso kgs/ml</th>
+                                            <th className="p-2.5 text-right w-28 bg-emerald-50 text-emerald-900 font-bold">Subtotal Kg</th>
+                                            <th className="p-2.5 text-center w-12">Quitar</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 bg-white">
+                                        {modeloEnEdicion.receta.map((insumo, index) => {
+                                            const mat = materiales.find(m => m.id === insumo.materialId);
+                                            const subtotalKg = ((Number(insumo.cantidadMetros) || 0) * (mat?.pesoPorMetro || 0));
+
+                                            return (
+                                                <tr key={index} className="hover:bg-gray-50/80">
+                                                    <td className="p-2">
+                                                        <select
+                                                            className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500 font-medium"
+                                                            value={insumo.materialId}
+                                                            onChange={e => cambiarMaterialInsumo(index, e.target.value)}
+                                                        >
+                                                            {materiales.map(m => (
+                                                                <option key={m.id} value={m.id}>
+                                                                    {m.nombre} ({m.pesoPorMetro} kg/ml)
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td className="p-2 text-center">
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            min="0.01"
+                                                            required
+                                                            className="w-full p-1.5 border border-blue-300 rounded text-center text-xs font-bold text-blue-700 bg-blue-50/30"
+                                                            value={insumo.cantidadMetros || ''}
+                                                            onChange={e => cambiarMetrosInsumo(index, Number(e.target.value))}
+                                                            placeholder="0.00"
+                                                        />
+                                                    </td>
+                                                    <td className="p-2 text-center text-gray-600 font-medium">
+                                                        {mat?.pesoPorMetro ? `${mat.pesoPorMetro} kg/m` : '-'}
+                                                    </td>
+                                                    <td className="p-2 text-right font-black text-emerald-700 bg-emerald-50/40">
+                                                        {subtotalKg.toFixed(2)} kg
+                                                    </td>
+                                                    <td className="p-2 text-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => eliminarInsumoDeModelo(index)}
+                                                            className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded font-bold transition-colors text-sm"
+                                                            title="Eliminar este perfil del modelo"
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Agregar nuevo insumo a la receta */}
+                        <div className="bg-blue-50/70 p-3.5 rounded-xl border border-blue-200">
+                            <label className="block text-xs font-bold text-blue-900 mb-2">
+                                + Agregar otro perfil a este modelo:
+                            </label>
+                            <div className="flex flex-wrap gap-2 items-center">
+                                <select
+                                    className="flex-1 min-w-[220px] p-2 border border-blue-300 rounded-lg text-xs bg-white font-medium"
+                                    value={nuevoInsumoMatId}
+                                    onChange={e => setNuevoInsumoMatId(e.target.value)}
+                                >
+                                    <option value="">-- Selecciona perfil de acero... --</option>
+                                    {materiales.map(m => (
+                                        <option key={m.id} value={m.id}>
+                                            {m.nombre} ({m.pesoPorMetro} kg/ml • Tramo {m.longitudTramo || 6}m)
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="w-28 flex items-center gap-1">
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Metros"
+                                        className="w-full p-2 border border-blue-300 rounded-lg text-xs bg-white font-bold text-center"
+                                        value={nuevoInsumoMetros}
+                                        onChange={e => setNuevoInsumoMetros(e.target.value)}
+                                    />
+                                    <span className="text-xs text-gray-500 font-bold">ml</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={agregarInsumoAModeloEnEdicion}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow transition-colors"
+                                >
+                                    + Agregar Insumo
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Resumen de totales del modelo */}
+                        <div className="flex justify-between items-center bg-gray-900 text-white p-3.5 rounded-xl shadow-inner">
+                            <div className="text-xs">
+                                <span className="text-gray-400">Total Metros Lineales:</span>{' '}
+                                <strong className="text-white text-sm">
+                                    {totalMetrosModelo.toFixed(2)} ml
+                                </strong>
+                            </div>
+                            <div className="text-xs">
+                                <span className="text-gray-400">Peso Total por Pieza:</span>{' '}
+                                <strong className="text-emerald-400 text-base">
+                                    {totalKgModelo.toFixed(2)} kg
+                                </strong>
+                            </div>
+                        </div>
+
+                        {/* Botones de acción del modal */}
+                        <div className="flex justify-end gap-2 pt-2 border-t">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setModalEditarModelo(false);
+                                    setModeloEnEdicion(null);
+                                }}
+                                className="px-4 py-2 border rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-100 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs shadow transition-colors flex items-center gap-1.5"
+                            >
+                                <span>💾</span> Guardar Cambios en el Modelo
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
     };
 
     // AGREGAR O ACTUALIZAR PARTIDA
@@ -745,6 +1144,9 @@ export default function Presupuestos() {
                     </div>
                 )}
 
+                {/* MODAL PARA EDITAR INSUMOS DEL MODELO ESTRUCTURAL */}
+                {renderModalEditarModelo()}
+
                 {/* CUERPO DEL COTIZADOR */}
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                     {/* PANEL IZQUIERDO: PRECIOS BASE DE MATERIALES */}
@@ -866,6 +1268,14 @@ export default function Presupuestos() {
                                 )}
                                 <button
                                     type="button"
+                                    onClick={() => abrirEditorModelo(modeloSel || undefined)}
+                                    className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded font-bold transition-colors shadow flex items-center gap-1"
+                                    title="Editar perfiles o metros de los modelos de herrería"
+                                >
+                                    <span>✏️</span> Editar Modelos
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={() => setMostrarAltaModelo(!mostrarAltaModelo)}
                                     className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700 font-bold transition-colors shadow"
                                 >
@@ -937,9 +1347,21 @@ export default function Presupuestos() {
                         <div className={`p-4 rounded-lg border ${partidaEditandoId ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200'}`}>
                             <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
                                 <div className="col-span-2">
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">
-                                        Modelo Estructural <span className="text-red-500">*</span>
-                                    </label>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-xs font-bold text-gray-700">
+                                            Modelo Estructural <span className="text-red-500">*</span>
+                                        </label>
+                                        {modeloSel && (
+                                            <button
+                                                type="button"
+                                                onClick={() => abrirEditorModelo(modeloSel)}
+                                                className="text-[10px] text-purple-700 hover:text-purple-900 font-bold flex items-center gap-1 bg-purple-50 hover:bg-purple-100 px-1.5 py-0.5 rounded border border-purple-200 transition-colors"
+                                                title="Editar los insumos (materiales y metros) de este modelo"
+                                            >
+                                                <span>✏️</span> Editar Insumos
+                                            </button>
+                                        )}
+                                    </div>
                                     <select
                                         className="w-full p-2 border border-gray-300 rounded text-sm bg-white focus:ring-1 focus:ring-blue-500"
                                         value={modeloSel}
@@ -1071,7 +1493,7 @@ export default function Presupuestos() {
                                 <th className="p-2.5 text-right">PU. Kg Final</th>
                                 <th className="p-2.5 text-right bg-blue-50 text-blue-900 font-bold">P. Unit. (Pza)</th>
                                 <th className="p-2.5 text-right font-bold text-emerald-700">SUMA TOTAL</th>
-                                <th className="p-2.5 text-center w-28">Acciones</th>
+                                <th className="p-2.5 text-center min-w-[150px]">Acciones</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -1119,7 +1541,7 @@ export default function Presupuestos() {
                                             <td className="p-2.5 text-right font-black text-emerald-700 bg-emerald-50/20">
                                                 ${suma.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </td>
-                                            <td className="p-2.5 text-center space-x-1">
+                                            <td className="p-2.5 text-center space-x-1 whitespace-nowrap">
                                                 <button
                                                     type="button"
                                                     onClick={() => cargarPartidaParaEditar(p)}
@@ -1127,6 +1549,14 @@ export default function Presupuestos() {
                                                     title="Modificar esta partida"
                                                 >
                                                     Editar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => abrirEditorModelo(p.modeloId)}
+                                                    className="bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold px-2 py-1 rounded text-[11px] transition-colors"
+                                                    title="Editar materiales y medidas del modelo de herrería"
+                                                >
+                                                    📐 Modelo
                                                 </button>
                                                 <button
                                                     type="button"
@@ -1504,6 +1934,9 @@ export default function Presupuestos() {
                     </div>
                 </div>
             )}
+
+            {/* MODAL PARA EDITAR INSUMOS DEL MODELO ESTRUCTURAL */}
+            {renderModalEditarModelo()}
 
             {/* LISTADO DE PRESUPUESTOS GUARDADOS */}
             <div>
