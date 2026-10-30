@@ -863,7 +863,7 @@ export default function Presupuestos() {
         let csv = '\uFEFF';
         csv += `Presupuesto:,${presupuestoActivo.nombre || 'Presupuesto'}\n`;
         csv += `Subcontrato:,HERRERÍA\nPromoción:,${presupuestoActivo.promocion}\nDesarrollo:,${presupuestoActivo.desarrollo}\nCiudad:,${presupuestoActivo.ciudad}\nFecha:,${presupuestoActivo.fecha}\nPROVEEDOR:,BENCH\n\n`;
-        csv += `Código, Descripción, Unidad, Cantidad, Módulos, Piezas Totales, M2 Pintura, Tipo Pintura, Kg pza, PU. Kg, P. Unitario, SUMA\n`;
+        csv += `Código, Descripción, Unidad, Cantidad, Módulos, Total Piezas, M2 Pintura, Tipo Pintura, Kgs x Pieza, P.U. Kg, P.U. x Pieza, Suma\n`;
 
         presupuestoActivo.partidas.forEach(p => {
             const finanzas = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
@@ -1635,19 +1635,19 @@ export default function Presupuestos() {
                         </table>
                         <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
                     </div>
-                    <table className="w-full text-center border-collapse border border-black text-[10px]">
+                    <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
                         <thead className="bg-gray-200 font-bold">
                             <tr>
-                                <th className="border border-black p-1">Código</th>
-                                <th className="border border-black p-1 text-left">Descripción</th>
-                                <th className="border border-black p-1">U.</th>
-                                <th className="border border-black p-1">Cant</th>
-                                <th className="border border-black p-1">Mod</th>
-                                <th className="border border-black p-1">Pzas Tot</th>
-                                <th className="border border-black p-1">PU. Kg</th>
-                                <th className="border border-black p-1">Kg pza</th>
-                                <th className="border border-black p-1">P. Unitario</th>
-                                <th className="border border-black p-1">SUMA</th>
+                                <th className="border border-black p-1 w-[7%]">Código</th>
+                                <th className="border border-black p-1 text-left w-[40%]">Descripción</th>
+                                <th className="border border-black p-1 w-[6%]">Unidad</th>
+                                <th className="border border-black p-1 w-[6%]">Cantidad</th>
+                                <th className="border border-black p-1 w-[6%]">Módulos</th>
+                                <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
+                                <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
+                                <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
+                                <th className="border border-black p-1 w-[11%] leading-tight">P.U. x Pieza</th>
+                                <th className="border border-black p-1 w-[12%]">Suma</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1657,22 +1657,22 @@ export default function Presupuestos() {
                                 const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m² de Pintura ${p.tipoPintura})` : '';
                                 return (
                                     <tr key={p.id}>
-                                        <td className="border border-black p-1">{p.codigo}</td>
-                                        <td className="border border-black p-1 text-left">{p.descripcion}{pinturaDesc}</td>
+                                        <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
+                                        <td className="border border-black p-1 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
                                         <td className="border border-black p-1">{p.unidad}</td>
                                         <td className="border border-black p-1">{p.cantidad}</td>
                                         <td className="border border-black p-1">{p.modulos}</td>
                                         <td className="border border-black p-1 font-bold">{pzas}</td>
                                         <td className="border border-black p-1">${fin.precioKgCliente.toFixed(2)}</td>
                                         <td className="border border-black p-1">{fin.kgTotales.toFixed(2)}</td>
-                                        <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                                        <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                                        <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                     </tr>
                                 );
                             })}
                             <tr>
-                                <td colSpan={9} className="border border-black p-1 text-right font-bold">TOTAL:</td>
-                                <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                                <td colSpan={9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
+                                <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                         </tbody>
                     </table>
