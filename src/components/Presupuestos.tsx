@@ -473,6 +473,8 @@ export default function Presupuestos() {
             csv += `${p.codigo},"${p.descripcion.replace(/"/g, '""')}",${p.unidad},${p.cantidad},${p.modulos},${piezasTotales},${finanzas.m2Pintura.toFixed(2)},${p.tipoPintura},${finanzas.kgTotales.toFixed(2)},${finanzas.precioKgCliente.toFixed(2)},${finanzas.precioUnitarioFinal.toFixed(2)},${suma.toFixed(2)}\n`;
         });
 
+        csv += `\nPRECIOS NETOS\nPRECIOS POR KG INCLUYEN PINTURA\n`;
+
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -1244,6 +1246,12 @@ export default function Presupuestos() {
                             </tr>
                         </tbody>
                     </table>
+
+                    {/* LEYENDAS INFERIORES */}
+                    <div className="mt-4 text-[11px] font-bold text-black uppercase space-y-1">
+                        <p className="font-black tracking-wide">PRECIOS NETOS</p>
+                        <p className="font-black tracking-wide">PRECIOS POR KG INCLUYEN PINTURA</p>
+                    </div>
                 </div>
             </div>
         );
