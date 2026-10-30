@@ -1638,8 +1638,8 @@ export default function Presupuestos() {
                     <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
                         <thead className="bg-gray-200 font-bold">
                             <tr>
-                                <th className="border border-black p-1 w-[7%]">Código</th>
-                                <th className="border border-black p-1 text-left w-[40%]">Descripción</th>
+                                <th className="border border-black p-1 w-[12%]">Código</th>
+                                <th className="border border-black p-1 text-left w-[35%]">Descripción</th>
                                 <th className="border border-black p-1 w-[6%]">Unidad</th>
                                 <th className="border border-black p-1 w-[6%]">Cantidad</th>
                                 <th className="border border-black p-1 w-[6%]">Módulos</th>
@@ -1654,7 +1654,7 @@ export default function Presupuestos() {
                             {presupuestoActivo.partidas.map(p => {
                                 const fin = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
                                 const pzas = p.cantidad * p.modulos;
-                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye ${fin.m2Pintura.toFixed(2)}m² de Pintura ${p.tipoPintura})` : '';
+                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye Pintura ${p.tipoPintura})` : '';
                                 return (
                                     <tr key={p.id}>
                                         <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
