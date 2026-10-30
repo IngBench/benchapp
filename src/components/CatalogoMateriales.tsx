@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { Material } from '../types';
+import type { Material, ModeloHerreria, Presupuesto } from '../types';
 
 export default function CatalogoMateriales() {
     const [materiales, setMateriales] = useState<Material[]>([]);
+    const [modelos, setModelos] = useState<ModeloHerreria[]>([]);
+    const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([]);
     const [busqueda, setBusqueda] = useState('');
 
     // Estado para altas nuevas (Formulario individual)
@@ -20,11 +22,24 @@ export default function CatalogoMateriales() {
 
     // Escucha en tiempo real de Firebase
     useEffect(() => {
-        const desuscribir = onSnapshot(collection(db, 'materiales'), (snapshot) => {
+        const desuscribirMateriales = onSnapshot(collection(db, 'materiales'), (snapshot) => {
             const materialesData = snapshot.docs.map(doc => doc.data() as Material);
             setMateriales(materialesData);
         });
-        return () => desuscribir();
+        const desuscribirModelos = onSnapshot(collection(db, 'modelos'), (snapshot) => {
+            const modelosData = snapshot.docs.map(doc => doc.data() as ModeloHerreria);
+            setModelos(modelosData);
+        });
+        const desuscribirPresupuestos = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
+            const presupuestosData = snapshot.docs.map(doc => doc.data() as Presupuesto);
+            setPresupuestos(presupuestosData);
+        });
+
+        return () => {
+            desuscribirMateriales();
+            desuscribirModelos();
+            desuscribirPresupuestos();
+        };
     }, []);
 
     // Guardar alta individual
@@ -92,8 +107,30 @@ export default function CatalogoMateriales() {
         }
     };
 
-    // Eliminar material
+    // Comprobar si el material está en uso en algún modelo o presupuesto
+    const comprobarUsoMaterial = (materialId: string) => {
+        // En recetas de modelos
+        const modelosQueLoUsan = modelos.filter(m => m.receta?.some(r => r.materialId === materialId));
+        // En presupuestos
+        const presupuestosQueLoUsan = presupuestos.filter(p => p.preciosMateriales?.some(pm => pm.materialId === materialId));
+        return {
+            enUso: modelosQueLoUsan.length > 0 || presupuestosQueLoUsan.length > 0,
+            modelos: modelosQueLoUsan.map(m => m.nombre),
+            presupuestos: presupuestosQueLoUsan.map(p => p.nombre || p.desarrollo)
+        };
+    };
+
+    // Eliminar material (bloqueado si está en uso)
     const eliminarMaterial = async (id: string, nombreMat: string) => {
+        const uso = comprobarUsoMaterial(id);
+        if (uso.enUso) {
+            let detalles = '';
+            if (uso.modelos.length > 0) detalles += `\n• En modelos: ${uso.modelos.join(', ')}`;
+            if (uso.presupuestos.length > 0) detalles += `\n• En presupuestos: ${uso.presupuestos.join(', ')}`;
+            alert(`El perfil "${nombreMat}" no se puede eliminar porque está en uso:${detalles}\n\nPrimero retíralo de las recetas o presupuestos donde se utiliza.`);
+            return;
+        }
+
         if (confirm(`¿Estás seguro de eliminar el perfil "${nombreMat}" del catálogo?`)) {
             try {
                 await deleteDoc(doc(db, 'materiales', id));
@@ -260,101 +297,128 @@ export default function CatalogoMateriales() {
                                 <th className="p-3 border-b">Perfil</th>
                                 <th className="p-3 border-b text-center">kgs/ml</th>
                                 <th className="p-3 border-b text-center">Presentación</th>
+                                <th className="p-3 border-b text-center">Estado</th>
                                 <th className="p-3 border-b text-center w-36">Acciones</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {materialesFiltrados.length === 0 ? (
                                 <tr>
-                                    <td colSpan={4} className="p-8 text-center text-gray-400 italic">
+                                    <td colSpan={5} className="p-8 text-center text-gray-400 italic">
                                         {materiales.length === 0
                                             ? 'No hay perfiles registrados en el catálogo. Añade uno arriba o importa desde Excel.'
                                             : 'No se encontraron perfiles con esa búsqueda.'}
                                     </td>
                                 </tr>
                             ) : (
-                                materialesFiltrados.map(m => (
-                                    <tr key={m.id} className={editandoId === m.id ? 'bg-yellow-50' : 'hover:bg-gray-50'}>
-                                        {editandoId === m.id ? (
-                                            <>
-                                                <td className="p-2">
-                                                    <input
-                                                        type="text"
-                                                        className="w-full p-2 border border-yellow-400 rounded bg-white shadow-sm font-bold text-gray-800"
-                                                        value={datosFila.nombre}
-                                                        onChange={e => setDatosFila({ ...datosFila, nombre: e.target.value })}
-                                                    />
-                                                </td>
-                                                <td className="p-2">
-                                                    <input
-                                                        type="number"
-                                                        step="0.001"
-                                                        className="w-full p-2 border border-yellow-400 rounded text-center bg-white shadow-sm font-bold text-blue-700"
-                                                        value={datosFila.pesoPorMetro}
-                                                        onChange={e => setDatosFila({ ...datosFila, pesoPorMetro: e.target.value })}
-                                                    />
-                                                </td>
-                                                <td className="p-2">
-                                                    <div className="flex justify-center items-center gap-1">
+                                materialesFiltrados.map(m => {
+                                    const uso = comprobarUsoMaterial(m.id);
+                                    return (
+                                        <tr key={m.id} className={editandoId === m.id ? 'bg-yellow-50' : 'hover:bg-gray-50'}>
+                                            {editandoId === m.id ? (
+                                                <>
+                                                    <td className="p-2">
+                                                        <input
+                                                            type="text"
+                                                            className="w-full p-2 border border-yellow-400 rounded bg-white shadow-sm font-bold text-gray-800"
+                                                            value={datosFila.nombre}
+                                                            onChange={e => setDatosFila({ ...datosFila, nombre: e.target.value })}
+                                                        />
+                                                    </td>
+                                                    <td className="p-2">
                                                         <input
                                                             type="number"
-                                                            step="0.1"
-                                                            className="w-20 p-2 border border-yellow-400 rounded text-center bg-white shadow-sm text-gray-700"
-                                                            value={datosFila.longitudTramo}
-                                                            onChange={e => setDatosFila({ ...datosFila, longitudTramo: e.target.value })}
+                                                            step="0.001"
+                                                            className="w-full p-2 border border-yellow-400 rounded text-center bg-white shadow-sm font-bold text-blue-700"
+                                                            value={datosFila.pesoPorMetro}
+                                                            onChange={e => setDatosFila({ ...datosFila, pesoPorMetro: e.target.value })}
                                                         />
-                                                        <span className="text-xs text-gray-500">m</span>
-                                                    </div>
-                                                </td>
-                                                <td className="p-2 text-center space-x-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => guardarEdicionFila(m.id)}
-                                                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-xs shadow-sm"
-                                                    >
-                                                        Guardar
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setEditandoId(null)}
-                                                        className="bg-gray-400 hover:bg-gray-500 text-white px-2 py-1.5 rounded font-bold text-xs shadow-sm"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </td>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <td className="p-3 font-bold text-gray-800">
-                                                    {m.nombre}
-                                                </td>
-                                                <td className="p-3 text-center font-bold text-blue-700 bg-blue-50/50">
-                                                    {m.pesoPorMetro} <span className="text-xs text-gray-500 font-normal">kg/m</span>
-                                                </td>
-                                                <td className="p-3 text-center text-gray-600">
-                                                    Tramo {m.longitudTramo || 6} m
-                                                </td>
-                                                <td className="p-3 text-center space-x-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => iniciarEdicionFila(m)}
-                                                        className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
-                                                    >
-                                                        Editar
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => eliminarMaterial(m.id, m.nombre)}
-                                                        className="bg-red-50 text-red-600 hover:bg-red-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
-                                                        title="Eliminar perfil"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </td>
-                                            </>
-                                        )}
-                                    </tr>
-                                ))
+                                                    </td>
+                                                    <td className="p-2">
+                                                        <div className="flex justify-center items-center gap-1">
+                                                            <input
+                                                                type="number"
+                                                                step="0.1"
+                                                                className="w-20 p-2 border border-yellow-400 rounded text-center bg-white shadow-sm text-gray-700"
+                                                                value={datosFila.longitudTramo}
+                                                                onChange={e => setDatosFila({ ...datosFila, longitudTramo: e.target.value })}
+                                                            />
+                                                            <span className="text-xs text-gray-500">m</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-2 text-center">
+                                                        -
+                                                    </td>
+                                                    <td className="p-2 text-center space-x-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => guardarEdicionFila(m.id)}
+                                                            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-xs shadow-sm"
+                                                        >
+                                                            Guardar
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEditandoId(null)}
+                                                            className="bg-gray-400 hover:bg-gray-500 text-white px-2 py-1.5 rounded font-bold text-xs shadow-sm"
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </td>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <td className="p-3 font-bold text-gray-800">
+                                                        {m.nombre}
+                                                    </td>
+                                                    <td className="p-3 text-center font-bold text-blue-700 bg-blue-50/50">
+                                                        {m.pesoPorMetro} <span className="text-xs text-gray-500 font-normal">kg/m</span>
+                                                    </td>
+                                                    <td className="p-3 text-center text-gray-600">
+                                                        Tramo {m.longitudTramo || 6} m
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        {uso.enUso ? (
+                                                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full inline-block" title="En uso en modelos o presupuestos">
+                                                                En uso
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[10px] bg-gray-100 text-gray-500 font-medium px-2 py-0.5 rounded-full inline-block" title="Disponible / sin uso">
+                                                                Libre
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3 text-center space-x-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => iniciarEdicionFila(m)}
+                                                            className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
+                                                        >
+                                                            Editar
+                                                        </button>
+                                                        {uso.enUso ? (
+                                                            <span
+                                                                className="px-2.5 py-1 text-gray-300 text-xs cursor-not-allowed select-none"
+                                                                title="No se puede borrar porque está en uso en presupuestos o modelos"
+                                                            >
+                                                                🔒
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => eliminarMaterial(m.id, m.nombre)}
+                                                                className="bg-red-50 text-red-600 hover:bg-red-100 px-2.5 py-1 rounded font-bold text-xs transition-colors"
+                                                                title="Eliminar perfil"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </>
+                                            )}
+                                        </tr>
+                                    );
+                                })
                             )}
                         </tbody>
                     </table>
