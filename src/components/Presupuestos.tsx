@@ -882,10 +882,11 @@ export default function Presupuestos() {
         if (partida.tipoPintura === 'Esmalte') costoPintura = m2Pintura * 225.40;
         else if (partida.tipoPintura === 'Electroestática') costoPintura = m2Pintura * 350.00;
 
-        const precioUnitarioFinal = precioAceroVenta + costoPintura;
+        const subtotalUnitario = precioAceroVenta + costoPintura;
+        const precioUnitarioFinal = subtotalUnitario * 1.16;
         const precioKgCliente = kgTotales > 0 ? (precioUnitarioFinal / kgTotales) : 0;
 
-        return { kgTotales, precioKgCalculado, precioKgFinal, precioKgCliente, m2Pintura, costoPintura, precioUnitarioFinal };
+        return { kgTotales, precioKgCalculado, precioKgFinal, precioKgCliente, m2Pintura, costoPintura, subtotalUnitario, precioUnitarioFinal };
     };
 
     // EXPORTAR A EXCEL (CSV)
@@ -943,7 +944,7 @@ export default function Presupuestos() {
             if (partida.tipoPintura === 'Esmalte') costoPint = m2P * 225.40;
             else if (partida.tipoPintura === 'Electroestática') costoPint = m2P * 350.00;
 
-            const unitario = costoAcero + costoPint;
+            const unitario = (costoAcero + costoPint) * 1.16;
             total += unitario * (partida.cantidad * partida.modulos);
         });
         return total;
@@ -973,6 +974,8 @@ export default function Presupuestos() {
                 sumatoriaPreciosKgCalculado += f.precioKgCalculado;
                 modelosConPrecio++;
             }
+            const finActivo = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
+            granTotal += finActivo.precioUnitarioFinal * (p.cantidad * p.modulos);
         });
 
         const promedioCalculado = modelosConPrecio > 0 ? (sumatoriaPreciosKgCalculado / modelosConPrecio) : 0;
@@ -1901,7 +1904,6 @@ export default function Presupuestos() {
                                     const fin = finanzas;
                                     const piezasTotales = p.cantidad * p.modulos;
                                     const suma = fin.precioUnitarioFinal * piezasTotales;
-                                    granTotal += suma;
                                     const estaEditando = partidaEditandoId === p.id;
 
                                     return (
@@ -2009,6 +2011,97 @@ export default function Presupuestos() {
                         <span className="block text-3xl font-black text-emerald-400">
                             ${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
+                    </div>
+                </div>
+
+                {/* TARJETA DE REFERENCIA DE FÓRMULAS (SOLO PANTALLA / OCULTO EN PDF) */}
+                <div className="bg-slate-900 text-white p-5 rounded-xl border border-slate-700 shadow-md">
+                    <div className="flex flex-wrap items-center justify-between pb-3 mb-3 border-b border-slate-700/80 gap-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xl">📐</span>
+                            <div>
+                                <h4 className="text-sm font-bold tracking-wide text-white uppercase flex flex-wrap items-center gap-2">
+                                    Fórmula de Cálculo Financiero y Precios
+                                    <span className="text-[10px] font-normal normal-case bg-indigo-500/30 text-indigo-200 px-2.5 py-0.5 rounded-full border border-indigo-400/30">
+                                        Solo referencia en pantalla • Oculto en impresión PDF
+                                    </span>
+                                </h4>
+                                <p className="text-[11px] text-slate-300">
+                                    Desglose matemático aplicado a cada partida para calcular el P. Unit. (Pza), PU. Kg Final (+16% IVA) y la suma cotizada.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                        {/* PASO 1 */}
+                        <div className="bg-slate-800/90 p-3.5 rounded-lg border border-slate-700 flex flex-col justify-between">
+                            <div>
+                                <div className="text-amber-400 font-bold mb-1.5 flex items-center gap-1.5">
+                                    <span className="bg-amber-400/20 text-amber-300 w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-black">1</span>
+                                    Acero Base (Receta)
+                                </div>
+                                <p className="text-[11px] text-slate-200 font-mono leading-relaxed bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                                    (Costo Insumos + 10% Desp. + 16% IVA) × 2.30 Factor
+                                </p>
+                            </div>
+                            <span className="block mt-2 text-[10px] text-slate-400 italic">
+                                P.U. Base/Kg = Acero Base ÷ Kg Totales
+                            </span>
+                        </div>
+
+                        {/* PASO 2 */}
+                        <div className="bg-slate-800/90 p-3.5 rounded-lg border border-slate-700 flex flex-col justify-between">
+                            <div>
+                                <div className="text-cyan-400 font-bold mb-1.5 flex items-center gap-1.5">
+                                    <span className="bg-cyan-400/20 text-cyan-300 w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-black">2</span>
+                                    Acero Venta
+                                </div>
+                                <p className="text-[11px] text-slate-200 font-mono leading-relaxed bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                                    Kg Totales × Precio Kg (Calculado o Ajustado)
+                                </p>
+                            </div>
+                            <span className="block mt-2 text-[10px] text-slate-400 italic">
+                                Si se fija precio global, se usa en lugar del calculado.
+                            </span>
+                        </div>
+
+                        {/* PASO 3 */}
+                        <div className="bg-slate-800/90 p-3.5 rounded-lg border border-slate-700 flex flex-col justify-between">
+                            <div>
+                                <div className="text-purple-300 font-bold mb-1.5 flex items-center gap-1.5">
+                                    <span className="bg-purple-400/20 text-purple-300 w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-black">3</span>
+                                    Pintura (2 Caras)
+                                </div>
+                                <p className="text-[11px] text-slate-200 font-mono leading-relaxed bg-slate-900/60 p-2 rounded border border-slate-700/50">
+                                    (Largo × Ancho × 2) × Costo Pintura
+                                </p>
+                            </div>
+                            <span className="block mt-2 text-[10px] text-slate-400 italic">
+                                Electroestática: $350.00/m² • Esmalte: $225.40/m²
+                            </span>
+                        </div>
+
+                        {/* PASO 4 */}
+                        <div className="bg-indigo-950/60 p-3.5 rounded-lg border border-indigo-500/50 flex flex-col justify-between">
+                            <div>
+                                <div className="text-emerald-400 font-bold mb-1.5 flex items-center gap-1.5">
+                                    <span className="bg-emerald-400/20 text-emerald-300 w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-black">4</span>
+                                    Precio Final (+16% IVA)
+                                </div>
+                                <p className="text-[11px] text-emerald-300 font-mono font-bold leading-relaxed bg-slate-900/80 p-2 rounded border border-emerald-500/30">
+                                    Subtotal × 1.16 (+16% IVA Venta)
+                                </p>
+                            </div>
+                            <div className="mt-2 space-y-0.5">
+                                <span className="block text-[10px] text-indigo-200 font-semibold">
+                                    • P. Unit. (Pza) = (Acero + Pintura) × 1.16
+                                </span>
+                                <span className="block text-[10px] text-indigo-200 font-semibold">
+                                    • PU. Kg Final = P. Unit. (Pza) ÷ Kg Totales
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 </div>
