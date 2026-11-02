@@ -60,6 +60,10 @@ export default function Presupuestos() {
     // Búsqueda en listado
     const [busqueda, setBusqueda] = useState('');
 
+    // Modal para cotizar materiales y tramos con proveedores
+    const [modalCotizarMateriales, setModalCotizarMateriales] = useState(false);
+    const [copiadoExito, setCopiadoExito] = useState(false);
+
     // VIGILANTES DE FIREBASE (Escuchan en tiempo real)
     useEffect(() => {
         const desuscribirPresupuestos = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
@@ -971,16 +975,108 @@ export default function Presupuestos() {
         const promedioCalculado = modelosConPrecio > 0 ? (sumatoriaPreciosKgCalculado / modelosConPrecio) : 0;
         const obraAsociada = obras.find(o => o.id === presupuestoActivo.obraId);
 
-        // Identificar los materiales que realmente están en uso en las partidas actuales
+        // Identificar los materiales en uso y calcular metros y tramos requeridos
         const idsMaterialesEnUso = new Set<string>();
+        const materialModelosMap = new Map<string, Set<string>>();
+        const consumoMateriales = new Map<string, { totalMetros: number; tramos: number; tramosExactos: number; pesoKgTotal: number }>();
+
         presupuestoActivo.partidas.forEach(p => {
+            const pzas = (Number(p.cantidad) || 0) * (Number(p.modulos) || 1);
+            if (pzas <= 0) return;
             const mod = modelos.find(m => m.id === p.modeloId);
-            mod?.receta.forEach(req => {
+            if (!mod || !mod.receta) return;
+
+            mod.receta.forEach(req => {
                 idsMaterialesEnUso.add(req.materialId);
+
+                if (!materialModelosMap.has(req.materialId)) {
+                    materialModelosMap.set(req.materialId, new Set<string>());
+                }
+                const nombreEtiqueta = p.codigo || mod.nombre;
+                if (nombreEtiqueta) {
+                    materialModelosMap.get(req.materialId)?.add(nombreEtiqueta);
+                }
+
+                const metrosPartida = (Number(req.cantidadMetros) || 0) * pzas;
+                const actual = consumoMateriales.get(req.materialId) || { totalMetros: 0, tramos: 0, tramosExactos: 0, pesoKgTotal: 0 };
+                actual.totalMetros += metrosPartida;
+                consumoMateriales.set(req.materialId, actual);
             });
         });
 
+        let totalTramosPresupuesto = 0;
+        let totalMetrosPresupuesto = 0;
+        let totalKilosPresupuesto = 0;
+
+        consumoMateriales.forEach((val, matId) => {
+            const mat = materiales.find(m => m.id === matId);
+            const longTramo = (mat?.longitudTramo && mat.longitudTramo > 0) ? mat.longitudTramo : 6;
+            val.tramosExactos = longTramo > 0 ? (val.totalMetros / longTramo) : 0;
+            val.tramos = Math.ceil(val.tramosExactos);
+            val.pesoKgTotal = val.totalMetros * (mat?.pesoPorMetro || 0);
+
+            totalTramosPresupuesto += val.tramos;
+            totalMetrosPresupuesto += val.totalMetros;
+            totalKilosPresupuesto += val.pesoKgTotal;
+        });
+
+        // Lista formateada y ordenada para el modal y exportación/copiado
+        const materialesCotizacionList = Array.from(consumoMateriales.entries()).map(([matId, c]) => {
+            const mat = materiales.find(m => m.id === matId);
+            const longTramo = (mat?.longitudTramo && mat.longitudTramo > 0) ? mat.longitudTramo : 6;
+            const modelosNombres = Array.from(materialModelosMap.get(matId) || []);
+            return {
+                materialId: matId,
+                nombre: mat?.nombre || matId,
+                longTramo,
+                metros: c.totalMetros,
+                tramos: c.tramos,
+                tramosExactos: c.tramosExactos,
+                pesoKgTotal: c.pesoKgTotal,
+                modelos: modelosNombres
+            };
+        }).sort((a, b) => b.tramos - a.tramos);
+
         const totalObsoletos = (presupuestoActivo.preciosMateriales || []).filter(pm => !idsMaterialesEnUso.has(pm.materialId)).length;
+
+        // Copiar texto para cotizar al proveedor
+        const copiarListaMateriales = () => {
+            let texto = `📋 LISTA DE MATERIALES PARA COTIZAR\n`;
+            texto += `Presupuesto: ${presupuestoActivo.nombre || presupuestoActivo.desarrollo}\n`;
+            if (presupuestoActivo.desarrollo) texto += `Desarrollo: ${presupuestoActivo.desarrollo} (${presupuestoActivo.promocion || ''})\n`;
+            if (presupuestoActivo.cliente) texto += `Cliente: ${presupuestoActivo.cliente}\n`;
+            if (presupuestoActivo.fecha) texto += `Fecha: ${presupuestoActivo.fecha}\n`;
+            texto += `--------------------------------------------------\n\n`;
+
+            materialesCotizacionList.forEach((item, index) => {
+                texto += `${index + 1}. ${item.nombre}\n`;
+                texto += `   • Tramos a solicitar: ${item.tramos} tramo(s) de ${item.longTramo}m\n`;
+                texto += `   • Metros totales exactos: ${item.metros.toFixed(2)} ml\n`;
+                if (item.pesoKgTotal > 0) {
+                    texto += `   • Peso estimado: ${item.pesoKgTotal.toFixed(2)} kg\n`;
+                }
+                if (item.modelos.length > 0) {
+                    texto += `   • En conceptos: ${item.modelos.join(', ')}\n`;
+                }
+                texto += `\n`;
+            });
+
+            texto += `--------------------------------------------------\n`;
+            texto += `TOTAL PERFILES: ${materialesCotizacionList.length} tipo(s)\n`;
+            texto += `TOTAL TRAMOS A PEDIR: ${totalTramosPresupuesto} tramo(s) comerciales\n`;
+            texto += `METROS LINEALES TOTALES: ${totalMetrosPresupuesto.toFixed(2)} ml\n`;
+            if (totalKilosPresupuesto > 0) {
+                texto += `PESO TOTAL ESTIMADO: ${totalKilosPresupuesto.toFixed(2)} kg\n`;
+            }
+
+            navigator.clipboard.writeText(texto).then(() => {
+                setCopiadoExito(true);
+                setTimeout(() => setCopiadoExito(false), 3000);
+            }).catch(err => {
+                console.error('Error al copiar al portapapeles:', err);
+                alert('No se pudo copiar automáticamente. Puedes seleccionar el texto en la tabla.');
+            });
+        };
 
         return (
             <div className="space-y-6">
@@ -1208,29 +1304,163 @@ export default function Presupuestos() {
                 {/* MODAL PARA EDITAR INSUMOS DEL MODELO ESTRUCTURAL */}
                 {renderModalEditarModelo()}
 
+                {/* MODAL PARA COTIZAR MATERIALES CON PROVEEDORES */}
+                {modalCotizarMateriales && (
+                    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 border border-gray-200 my-8 max-h-[90vh] flex flex-col">
+                            <div className="flex justify-between items-start border-b pb-3 mb-4">
+                                <div>
+                                    <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                        <span>📋</span> Lista de Materiales para Cotizar
+                                    </h3>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                        {presupuestoActivo.nombre || presupuestoActivo.desarrollo} • Cliente: {presupuestoActivo.cliente} • Fecha: {presupuestoActivo.fecha}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setModalCotizarMateriales(false)}
+                                    className="text-gray-400 hover:text-gray-600 font-bold text-xl p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* TABLA DE MATERIALES */}
+                            <div className="overflow-y-auto flex-1 mb-4 border border-gray-200 rounded-xl">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-gray-100 text-gray-700 font-bold border-b text-[11px] uppercase">
+                                        <tr>
+                                            <th className="p-3">Perfil / Insumo</th>
+                                            <th className="p-3 text-center">Tramo</th>
+                                            <th className="p-3 text-right">Metros Totales</th>
+                                            <th className="p-3 text-center text-blue-900 bg-blue-50">Tramos a Pedir</th>
+                                            <th className="p-3 text-right">Peso Est.</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                        {materialesCotizacionList.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={5} className="p-6 text-center text-gray-400 italic">
+                                                    No hay partidas o modelos registrados en este presupuesto.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            materialesCotizacionList.map((item, idx) => (
+                                                <tr key={idx} className="hover:bg-gray-50">
+                                                    <td className="p-3 font-bold text-gray-900">
+                                                        {item.nombre}
+                                                        {item.modelos.length > 0 && (
+                                                            <span className="block text-[10px] text-gray-500 font-normal">
+                                                                En conceptos: {item.modelos.join(', ')}
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3 text-center text-gray-600">{item.longTramo}m</td>
+                                                    <td className="p-3 text-right font-medium text-gray-700">{item.metros.toFixed(2)} m</td>
+                                                    <td className="p-3 text-center font-black text-blue-950 bg-blue-50 text-sm">
+                                                        {item.tramos} trm
+                                                    </td>
+                                                    <td className="p-3 text-right text-gray-700 font-medium">
+                                                        {item.pesoKgTotal > 0 ? `${item.pesoKgTotal.toFixed(1)} kg` : '-'}
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                    {materialesCotizacionList.length > 0 && (
+                                        <tfoot className="bg-gray-100 font-bold border-t text-xs">
+                                            <tr>
+                                                <td className="p-3 text-gray-900 font-black">
+                                                    TOTAL ({materialesCotizacionList.length} tipos de perfil)
+                                                </td>
+                                                <td className="p-3 text-center">-</td>
+                                                <td className="p-3 text-right font-bold text-gray-800">{totalMetrosPresupuesto.toFixed(2)} m</td>
+                                                <td className="p-3 text-center font-black text-blue-950 bg-blue-100 text-sm">
+                                                    {totalTramosPresupuesto} tramos
+                                                </td>
+                                                <td className="p-3 text-right font-bold text-gray-900">
+                                                    {totalKilosPresupuesto > 0 ? `${totalKilosPresupuesto.toFixed(1)} kg` : '-'}
+                                                </td>
+                                            </tr>
+                                        </tfoot>
+                                    )}
+                                </table>
+                            </div>
+
+                            {/* BOTONES DE ACCIÓN */}
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t">
+                                <span className="text-[11px] text-gray-500">
+                                    💡 Se calcula con los metros de todos los modelos y se redondea hacia arriba al tramo comercial.
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={copiarListaMateriales}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow"
+                                    >
+                                        <span>{copiadoExito ? '✅' : '📋'}</span>
+                                        <span>{copiadoExito ? '¡Copiado al Portapapeles!' : 'Copiar para WhatsApp / Correo'}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setModalCotizarMateriales(false)}
+                                        className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold px-4 py-2 rounded-xl text-xs transition-colors"
+                                    >
+                                        Cerrar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* CUERPO DEL COTIZADOR */}
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                    {/* PANEL IZQUIERDO: PRECIOS BASE DE MATERIALES */}
-                    <div className="xl:col-span-1 bg-white p-5 rounded-xl border border-gray-200 shadow-sm self-start">
-                        <div className="flex justify-between items-center mb-2 border-b pb-2">
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                    {/* PANEL IZQUIERDO: PRECIOS BASE DE MATERIALES Y TRAMOS REQUERIDOS */}
+                    <div className="xl:col-span-5 bg-white p-5 rounded-xl border border-gray-200 shadow-sm self-start">
+                        <div className="flex flex-wrap justify-between items-center mb-2 border-b pb-2 gap-2">
                             <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
                                 <span>🔩</span> 1. Precios Base (Factura / Tramo)
                             </h3>
-                            {totalObsoletos > 0 && (
+                            <div className="flex items-center gap-1.5">
                                 <button
                                     type="button"
-                                    onClick={() => limpiarMaterialesObsoletos(idsMaterialesEnUso)}
-                                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 shadow-sm"
-                                    title="Eliminar todos los materiales que ya no se usan en ninguna partida"
+                                    onClick={() => setModalCotizarMateriales(true)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+                                    title="Ver y copiar lista de perfiles y tramos para pedir cotización al proveedor"
                                 >
-                                    <span>🧹</span> Limpiar obsoletos ({totalObsoletos})
+                                    <span>📋</span> Cotizar Insumos
                                 </button>
-                            )}
+                                {totalObsoletos > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => limpiarMaterialesObsoletos(idsMaterialesEnUso)}
+                                        className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 shadow-sm"
+                                        title="Eliminar todos los materiales que ya no se usan en ninguna partida"
+                                    >
+                                        <span>🧹</span> Limpiar ({totalObsoletos})
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                        <p className="text-xs text-gray-500 mb-4">
-                            Costo por tramo de los perfiles usados en esta cotización para calcular la venta por kg.
+                        <p className="text-xs text-gray-500 mb-3">
+                            Tramos necesarios para este presupuesto y costo por tramo para calcular la venta por kg.
                         </p>
-                        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+
+                        {/* ENCABEZADOS DE COLUMNA */}
+                        {presupuestoActivo.preciosMateriales && presupuestoActivo.preciosMateriales.length > 0 && (
+                            <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-gray-100 rounded-md mb-2">
+                                <span>Perfil / Insumo</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="w-[74px] text-center text-blue-900">Requerido</span>
+                                    <span className="w-20 text-right pr-1">Precio Tramo</span>
+                                    <span className="w-5 text-center"></span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
                             {(!presupuestoActivo.preciosMateriales || presupuestoActivo.preciosMateriales.length === 0) && (
                                 <p className="text-xs italic text-gray-400 bg-gray-50 p-3 rounded">
                                     Agrega conceptos al presupuesto para ver aquí los perfiles necesarios.
@@ -1240,74 +1470,123 @@ export default function Presupuestos() {
                                 const mat = materiales.find(m => m.id === pm.materialId);
                                 const estaEnUso = idsMaterialesEnUso.has(pm.materialId);
                                 const nombreMostrar = mat?.nombre || pm.materialId;
+                                const longTramo = (mat?.longitudTramo && mat.longitudTramo > 0) ? mat.longitudTramo : 6;
+                                const consumo = consumoMateriales.get(pm.materialId);
+                                const modelosQueUsan = Array.from(materialModelosMap.get(pm.materialId) || []);
 
                                 return (
                                     <div
                                         key={pm.materialId}
-                                        className={`flex justify-between items-center p-2.5 rounded-lg border text-xs transition-colors ${
+                                        className={`p-2.5 rounded-lg border text-xs transition-colors ${
                                             estaEnUso ? 'bg-gray-50 border-gray-200' : 'bg-amber-50/70 border-amber-300 shadow-sm'
                                         }`}
                                     >
-                                        <div className="pr-2 truncate flex-1 min-w-0">
-                                            <div className="flex items-center gap-1.5 mb-0.5">
-                                                <span className="font-bold text-gray-800 truncate" title={nombreMostrar}>
-                                                    {nombreMostrar}
+                                        <div className="flex items-center justify-between gap-2">
+                                            {/* LADO IZQUIERDO: NOMBRE Y DETALLE */}
+                                            <div className="truncate flex-1 min-w-0">
+                                                <div className="flex items-center gap-1.5 mb-0.5">
+                                                    <span className="font-bold text-gray-800 truncate" title={nombreMostrar}>
+                                                        {nombreMostrar}
+                                                    </span>
+                                                    {estaEnUso ? (
+                                                        <span
+                                                            className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded-full whitespace-nowrap cursor-help"
+                                                            title={modelosQueUsan.length > 0 ? `Utilizado en modelos: ${modelosQueUsan.join(', ')}` : "En uso en este presupuesto"}
+                                                        >
+                                                            En uso
+                                                        </span>
+                                                    ) : (
+                                                        <span
+                                                            className="text-[9px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.2 rounded-full whitespace-nowrap cursor-help"
+                                                            title="Obsoleto: ya no se usa en ninguna partida activa"
+                                                        >
+                                                            Obsoleto
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="text-[10px] text-gray-500 block truncate">
+                                                    {mat?.pesoPorMetro ? `${mat.pesoPorMetro} kg/m • ` : ''}Tramo {longTramo}m
+                                                    {estaEnUso && modelosQueUsan.length > 0 && (
+                                                        <span className="text-gray-400 ml-1">({modelosQueUsan.join(', ')})</span>
+                                                    )}
                                                 </span>
+                                            </div>
+
+                                            {/* LADO DERECHO: TRAMOS REQUERIDOS + PRECIO + CANDADO */}
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                {/* TRAMOS REQUERIDOS */}
+                                                <div
+                                                    className={`text-center px-2 py-1 rounded-lg border min-w-[74px] shadow-sm ${
+                                                        estaEnUso && (consumo?.tramos || 0) > 0
+                                                            ? 'bg-blue-50 border-blue-300 text-blue-950 font-black'
+                                                            : 'bg-gray-100 border-gray-200 text-gray-400'
+                                                    }`}
+                                                    title={
+                                                        consumo && consumo.tramos > 0
+                                                            ? `${consumo.totalMetros.toFixed(2)} ml necesarios en total (${consumo.tramosExactos.toFixed(2)} tramos de ${longTramo}m)`
+                                                            : 'No se requiere en ninguna partida activa'
+                                                    }
+                                                >
+                                                    <div className="text-[11px] font-black leading-none">
+                                                        {consumo && consumo.tramos > 0 ? `${consumo.tramos} trm` : '0 trm'}
+                                                    </div>
+                                                    <div className="text-[9px] font-bold leading-tight mt-0.5 text-blue-700 opacity-90">
+                                                        {consumo && consumo.totalMetros > 0 ? `${consumo.totalMetros.toFixed(1)}m` : '0m'}
+                                                    </div>
+                                                </div>
+
+                                                {/* INPUT PRECIO */}
+                                                <div className="flex items-center gap-1 w-20">
+                                                    <span className="text-gray-500 font-bold text-xs">$</span>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        className="w-full p-1.5 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white shadow-inner focus:ring-1 focus:ring-blue-500 text-xs"
+                                                        value={pm.precioTramo || ''}
+                                                        onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))}
+                                                        placeholder="0.00"
+                                                        title="Costo por tramo comercial para calcular venta por kg"
+                                                    />
+                                                </div>
+
+                                                {/* CANDADO / BORRAR */}
                                                 {estaEnUso ? (
-                                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded-full whitespace-nowrap" title="En uso por una o más partidas">
-                                                        En uso
+                                                    <span
+                                                        className="p-1 text-gray-300 cursor-not-allowed text-xs select-none"
+                                                        title="No se puede borrar porque está en uso en las partidas del presupuesto"
+                                                    >
+                                                        🔒
                                                     </span>
                                                 ) : (
-                                                    <span className="text-[9px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.2 rounded-full whitespace-nowrap" title="Obsoleto: ya no se usa en ninguna partida">
-                                                        Obsoleto
-                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => eliminarPrecioMaterial(pm.materialId, nombreMostrar, estaEnUso)}
+                                                        className="bg-red-50 hover:bg-red-200 text-red-600 border border-red-300 p-1.5 rounded text-xs font-bold transition-colors"
+                                                        title="Eliminar este perfil obsoleto de este presupuesto"
+                                                    >
+                                                        ✕
+                                                    </button>
                                                 )}
                                             </div>
-                                            <span className="text-[10px] text-gray-500 block">
-                                                {mat?.pesoPorMetro ? `${mat.pesoPorMetro} kg/m • ` : ''}Tramo {mat?.longitudTramo || 6}m
-                                            </span>
-                                        </div>
-
-                                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                                            <div className="flex items-center gap-1 w-24">
-                                                <span className="text-gray-500 font-bold">$</span>
-                                                <input
-                                                    type="number"
-                                                    step="0.01"
-                                                    className="w-full p-1.5 border border-blue-300 rounded text-right font-bold text-blue-700 bg-white shadow-inner focus:ring-1 focus:ring-blue-500 text-xs"
-                                                    value={pm.precioTramo || ''}
-                                                    onChange={e => actualizarPrecioMaterial(pm.materialId, Number(e.target.value))}
-                                                    placeholder="0.00"
-                                                />
-                                            </div>
-
-                                            {/* BOTÓN DE BORRAR PERFIL: SOLO DISPONIBLE SI YA NO SE USA */}
-                                            {estaEnUso ? (
-                                                <span
-                                                    className="p-1 text-gray-300 cursor-not-allowed text-xs select-none"
-                                                    title="No se puede borrar porque está en uso en las partidas del presupuesto"
-                                                >
-                                                    🔒
-                                                </span>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => eliminarPrecioMaterial(pm.materialId, nombreMostrar, estaEnUso)}
-                                                    className="bg-red-50 hover:bg-red-200 text-red-600 border border-red-300 p-1.5 rounded text-xs font-bold transition-colors"
-                                                    title="Eliminar este perfil obsoleto de este presupuesto"
-                                                >
-                                                    ✕
-                                                </button>
-                                            )}
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
+
+                        {/* PIE DEL PANEL: TOTAL DE TRAMOS */}
+                        <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap justify-between items-center text-xs gap-2">
+                            <span className="text-gray-500 font-medium">
+                                En uso: <strong className="text-gray-800">{idsMaterialesEnUso.size}</strong> de {presupuestoActivo.preciosMateriales?.length || 0} perfiles
+                            </span>
+                            <span className="text-blue-900 font-extrabold bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
+                                Total: {totalTramosPresupuesto} tramos requeridos
+                            </span>
+                        </div>
                     </div>
 
                     {/* PANEL DERECHO: AGREGAR O MODIFICAR CONCEPTO */}
-                    <div className="xl:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                    <div className="xl:col-span-7 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                         <div className="flex justify-between items-center mb-3 border-b pb-2">
                             <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
                                 <span>📐</span>
