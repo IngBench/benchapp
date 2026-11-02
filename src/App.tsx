@@ -148,10 +148,10 @@ export default function App() {
 
   // 4. Si el usuario está autorizado y activo, renderizamos el ERP
   return (
-    <div className="flex h-screen bg-gray-50 font-sans">
+    <div className="flex h-screen bg-gray-50 font-sans print:h-auto print:block print:bg-white">
       
       {/* PANEL LATERAL (SIDEBAR) */}
-      <div className="w-64 bg-[#111827] text-white flex flex-col justify-between shadow-xl z-10 flex-shrink-0">
+      <div className="w-64 bg-[#111827] text-white flex flex-col justify-between shadow-xl z-10 flex-shrink-0 print:hidden">
         <div>
           <div className="p-4 text-center border-b border-gray-800 bg-[#0f141e]">
             {/* Logo de la empresa */}
@@ -209,8 +209,8 @@ export default function App() {
         </div>
       </div>
 
-     {/* ÁREA PRINCIPAL DE TRABAJO (MÓDULOS) */}
-      <div className="flex-1 overflow-y-auto bg-gray-50 p-6 md:p-8">
+      {/* ÁREA PRINCIPAL DE TRABAJO (MÓDULOS) */}
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-6 md:p-8 print:p-0 print:overflow-visible print:block print:h-auto print:max-h-none">
         {activeView === 'obras' && <Obras />}
         {activeView === 'almacen' && <Inventario />}
         {activeView === 'catalogo' && <ModelosHerreria />}

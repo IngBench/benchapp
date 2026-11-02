@@ -1098,7 +1098,8 @@ export default function Presupuestos() {
         };
 
         return (
-            <div className="space-y-6">
+            <>
+                <div className="space-y-6 print:hidden">
                 {/* BARRA SUPERIOR DEL PRESUPUESTO */}
                 <div className="bg-gray-900 p-5 rounded-xl text-white shadow-xl flex flex-wrap justify-between items-center gap-4">
                     <div>
@@ -2010,12 +2011,37 @@ export default function Presupuestos() {
                         </span>
                     </div>
                 </div>
+                </div>
 
-                {/* FORMATO OCULTO PARA IMPRESIÓN (PDF) */}
+                {/* FORMATO DE IMPRESIÓN (PDF) - FUERA DEL CONTENEDOR PRINT:HIDDEN PARA PERMITIR MÚLTIPLES PÁGINAS */}
                 {formatoImpresion === 'materiales' ? (
-                    <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-[15mm]">
+                    <div className="hidden print:block w-full bg-white text-black p-[12mm]">
                         <style type="text/css" media="print">
-                            {`@page { size: portrait; margin: 0; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
+                            {`
+                                @page { 
+                                    size: portrait; 
+                                    margin: 0; 
+                                } 
+                                body { 
+                                    -webkit-print-color-adjust: exact; 
+                                    print-color-adjust: exact; 
+                                    background: white !important;
+                                }
+                                table {
+                                    page-break-inside: auto;
+                                    border-collapse: collapse;
+                                }
+                                thead {
+                                    display: table-header-group;
+                                }
+                                tr {
+                                    page-break-inside: avoid;
+                                    break-inside: avoid;
+                                }
+                                tfoot {
+                                    display: table-footer-group;
+                                }
+                            `}
                         </style>
                         {/* ENCABEZADO SOLICITUD DE MATERIALES */}
                         <div className="flex justify-between items-center mb-6 border-b-2 border-black pb-4">
@@ -2073,11 +2099,35 @@ export default function Presupuestos() {
                         </table>
                     </div>
                 ) : (
-                    <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-6">
+                    <div className="hidden print:block w-full bg-white text-black p-2">
                         <style type="text/css" media="print">
-                            {`@page { size: landscape; margin: 10mm; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
+                            {`
+                                @page { 
+                                    size: portrait; 
+                                    margin: 8mm; 
+                                } 
+                                body { 
+                                    -webkit-print-color-adjust: exact; 
+                                    print-color-adjust: exact; 
+                                    background: white !important;
+                                }
+                                table {
+                                    page-break-inside: auto;
+                                    border-collapse: collapse;
+                                }
+                                thead {
+                                    display: table-header-group;
+                                }
+                                tr {
+                                    page-break-inside: avoid;
+                                    break-inside: avoid;
+                                }
+                                tfoot {
+                                    display: table-footer-group;
+                                }
+                            `}
                         </style>
-                        <div className="flex justify-between items-start mb-6">
+                        <div className="flex justify-between items-start mb-4">
                             <table className="text-xs">
                                 <tbody>
                                     <tr><td className="font-bold pr-4">Presupuesto:</td><td className="font-bold text-base">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td></tr>
@@ -2140,13 +2190,13 @@ export default function Presupuestos() {
                         </table>
 
                         {/* LEYENDAS INFERIORES */}
-                        <div className="mt-4 text-[11px] font-bold text-black uppercase space-y-1">
+                        <div className="mt-4 text-[11px] font-bold text-black uppercase space-y-1" style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                             <p className="font-black tracking-wide">PRECIOS NETOS</p>
                             <p className="font-black tracking-wide">PRECIOS POR KG INCLUYEN PINTURA</p>
                         </div>
                     </div>
                 )}
-            </div>
+            </>
         );
     }
 
