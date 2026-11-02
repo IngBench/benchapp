@@ -64,6 +64,9 @@ export default function Presupuestos() {
     const [modalCotizarMateriales, setModalCotizarMateriales] = useState(false);
     const [copiadoExito, setCopiadoExito] = useState(false);
 
+    // Formato de impresión PDF ('presupuesto' | 'materiales')
+    const [formatoImpresion, setFormatoImpresion] = useState<'presupuesto' | 'materiales'>('presupuesto');
+
     // VIGILANTES DE FIREBASE (Escuchan en tiempo real)
     useEffect(() => {
         const desuscribirPresupuestos = onSnapshot(collection(db, 'presupuestos'), (snapshot) => {
@@ -1078,6 +1081,22 @@ export default function Presupuestos() {
             });
         };
 
+        // Imprimir / Exportar a PDF el presupuesto general (landscape)
+        const imprimirPresupuestoPDF = () => {
+            setFormatoImpresion('presupuesto');
+            setTimeout(() => {
+                window.print();
+            }, 150);
+        };
+
+        // Imprimir / Exportar a PDF la lista de materiales a cotizar (portrait - 2 columnas)
+        const imprimirMaterialesPDF = () => {
+            setFormatoImpresion('materiales');
+            setTimeout(() => {
+                window.print();
+            }, 150);
+        };
+
         return (
             <div className="space-y-6">
                 {/* BARRA SUPERIOR DEL PRESUPUESTO */}
@@ -1135,7 +1154,7 @@ export default function Presupuestos() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => window.print()}
+                            onClick={imprimirPresupuestoPDF}
                             className="bg-blue-600 hover:bg-blue-500 px-3.5 py-2 rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition-colors"
                         >
                             <span>🖨️</span> PDF
@@ -1404,6 +1423,15 @@ export default function Presupuestos() {
                                     </button>
                                     <button
                                         type="button"
+                                        onClick={imprimirMaterialesPDF}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow"
+                                        title="Exportar a PDF con columnas de Perfil y Tramos/Piezas"
+                                    >
+                                        <span>📑</span>
+                                        <span>Exportar a PDF</span>
+                                    </button>
+                                    <button
+                                        type="button"
                                         onClick={() => setModalCotizarMateriales(false)}
                                         className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold px-4 py-2 rounded-xl text-xs transition-colors"
                                     >
@@ -1431,6 +1459,14 @@ export default function Presupuestos() {
                                     title="Ver y copiar lista de perfiles y tramos para pedir cotización al proveedor"
                                 >
                                     <span>📋</span> Cotizar Insumos
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={imprimirMaterialesPDF}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-sm"
+                                    title="Exportar a PDF la lista de perfiles y tramos requeridos para enviar a proveedores"
+                                >
+                                    <span>📑</span> PDF Insumos
                                 </button>
                                 {totalObsoletos > 0 && (
                                     <button
@@ -1976,78 +2012,140 @@ export default function Presupuestos() {
                 </div>
 
                 {/* FORMATO OCULTO PARA IMPRESIÓN (PDF) */}
-                <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-6">
-                    <style type="text/css" media="print">
-                        {`@page { size: landscape; margin: 10mm; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
-                    </style>
-                    <div className="flex justify-between items-start mb-6">
-                        <table className="text-xs">
+                {formatoImpresion === 'materiales' ? (
+                    <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-[15mm]">
+                        <style type="text/css" media="print">
+                            {`@page { size: portrait; margin: 0; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
+                        </style>
+                        {/* ENCABEZADO SOLICITUD DE MATERIALES */}
+                        <div className="flex justify-between items-center mb-6 border-b-2 border-black pb-4">
+                            <h1 className="font-black text-2xl text-black tracking-tight uppercase">
+                                Solicitud de Cotización de Materiales
+                            </h1>
+                            <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
+                        </div>
+
+                        {/* TABLA DE 2 COLUMNAS (PERFIL Y TRAMOS/PIEZAS) */}
+                        <table className="w-full text-left border-collapse border-2 border-black">
+                            <thead className="bg-gray-200 font-bold">
+                                <tr>
+                                    <th className="border-2 border-black p-3.5 text-left uppercase text-[15px] font-black w-[75%]">
+                                        Perfil
+                                    </th>
+                                    <th className="border-2 border-black p-3.5 text-center uppercase text-[15px] font-black w-[25%]">
+                                        Tramos/Piezas
+                                    </th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                <tr><td className="font-bold pr-4">Presupuesto:</td><td className="font-bold text-base">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td></tr>
-                                <tr><td className="font-bold pr-4">Subcontrato:</td><td>HERRERÍA</td></tr>
-                                <tr><td className="font-bold pr-4">Promoción:</td><td>{presupuestoActivo.promocion}</td></tr>
-                                <tr><td className="font-bold pr-4">Desarrollo:</td><td>{presupuestoActivo.desarrollo}</td></tr>
-                                <tr><td className="font-bold pr-4">Ciudad:</td><td>{presupuestoActivo.ciudad}</td></tr>
-                                <tr><td className="font-bold pr-4">Fecha:</td><td>{presupuestoActivo.fecha}</td></tr>
-                                <tr><td className="font-bold pr-4">PROVEEDOR:</td><td className="font-bold text-lg">BENCH</td></tr>
+                                {materialesCotizacionList.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={2} className="border-2 border-black p-8 text-center text-gray-500 italic text-[16px]">
+                                            Sin materiales registrados en este presupuesto.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    materialesCotizacionList.map((item, idx) => (
+                                        <tr key={idx} className={idx % 2 === 1 ? 'bg-gray-50' : 'bg-white'}>
+                                            <td className="border-2 border-black p-3.5 align-middle">
+                                                <span className="font-black text-[16px] text-black block leading-snug">
+                                                    {item.nombre}
+                                                </span>
+                                                <span className="text-[12px] text-gray-600 font-semibold block mt-1">
+                                                    Tramo comercial de {item.longTramo}m
+                                                </span>
+                                            </td>
+                                            <td className="border-2 border-black p-3.5 text-center font-black text-[18px] text-black align-middle">
+                                                {item.tramos}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                                <tr className="bg-gray-100 font-black border-t-2 border-black">
+                                    <td className="border-2 border-black p-3.5 text-right uppercase text-[15px] font-black">
+                                        TOTAL TRAMOS / PIEZAS:
+                                    </td>
+                                    <td className="border-2 border-black p-3.5 text-center text-[18px] font-black text-black align-middle">
+                                        {totalTramosPresupuesto}
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
-                        <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
                     </div>
-                    <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
-                        <thead className="bg-gray-200 font-bold">
-                            <tr>
-                                {presupuestoActivo.mostrarLote && (
-                                    <th className="border border-black p-1 w-[8%]">Lote</th>
-                                )}
-                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
-                                <th className={`border border-black p-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[32%]' : 'w-[35%]'}`}>Descripción</th>
-                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
-                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
-                                <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
-                                <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
-                                <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
-                                <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
-                                <th className={`border border-black p-1 leading-tight ${presupuestoActivo.mostrarLote ? 'w-[10%]' : 'w-[11%]'}`}>P.U. x Pieza</th>
-                                <th className="border border-black p-1 w-[12%]">Suma</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {presupuestoActivo.partidas.map(p => {
-                                const fin = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
-                                const pzas = p.cantidad * p.modulos;
-                                const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye Pintura ${p.tipoPintura})` : '';
-                                return (
-                                    <tr key={p.id}>
-                                        {presupuestoActivo.mostrarLote && (
-                                            <td className="border border-black p-1 font-bold break-words">{p.lote || '-'}</td>
-                                        )}
-                                        <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
-                                        <td className="border border-black p-1 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
-                                        <td className="border border-black p-1">{p.unidad}</td>
-                                        <td className="border border-black p-1">{p.cantidad}</td>
-                                        <td className="border border-black p-1">{p.modulos}</td>
-                                        <td className="border border-black p-1 font-bold">{pzas}</td>
-                                        <td className="border border-black p-1">${fin.precioKgCliente.toFixed(2)}</td>
-                                        <td className="border border-black p-1">{fin.kgTotales.toFixed(2)}</td>
-                                        <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    </tr>
-                                );
-                            })}
-                            <tr>
-                                <td colSpan={presupuestoActivo.mostrarLote ? 10 : 9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
-                                <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                ) : (
+                    <div className="hidden print:block fixed top-0 left-0 w-full h-full z-50 bg-white p-6">
+                        <style type="text/css" media="print">
+                            {`@page { size: landscape; margin: 10mm; } body {-webkit-print-color-adjust: exact; print-color-adjust: exact; }`}
+                        </style>
+                        <div className="flex justify-between items-start mb-6">
+                            <table className="text-xs">
+                                <tbody>
+                                    <tr><td className="font-bold pr-4">Presupuesto:</td><td className="font-bold text-base">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td></tr>
+                                    <tr><td className="font-bold pr-4">Subcontrato:</td><td>HERRERÍA</td></tr>
+                                    <tr><td className="font-bold pr-4">Promoción:</td><td>{presupuestoActivo.promocion}</td></tr>
+                                    <tr><td className="font-bold pr-4">Desarrollo:</td><td>{presupuestoActivo.desarrollo}</td></tr>
+                                    <tr><td className="font-bold pr-4">Ciudad:</td><td>{presupuestoActivo.ciudad}</td></tr>
+                                    <tr><td className="font-bold pr-4">Fecha:</td><td>{presupuestoActivo.fecha}</td></tr>
+                                    <tr><td className="font-bold pr-4">PROVEEDOR:</td><td className="font-bold text-lg">BENCH</td></tr>
+                                </tbody>
+                            </table>
+                            <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
+                        </div>
+                        <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
+                            <thead className="bg-gray-200 font-bold">
+                                <tr>
+                                    {presupuestoActivo.mostrarLote && (
+                                        <th className="border border-black p-1 w-[8%]">Lote</th>
+                                    )}
+                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
+                                    <th className={`border border-black p-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[32%]' : 'w-[35%]'}`}>Descripción</th>
+                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
+                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
+                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
+                                    <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
+                                    <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
+                                    <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
+                                    <th className={`border border-black p-1 leading-tight ${presupuestoActivo.mostrarLote ? 'w-[10%]' : 'w-[11%]'}`}>P.U. x Pieza</th>
+                                    <th className="border border-black p-1 w-[12%]">Suma</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {presupuestoActivo.partidas.map(p => {
+                                    const fin = calcularFinanzasPartida(p, presupuestoActivo.precioGlobalKg);
+                                    const pzas = p.cantidad * p.modulos;
+                                    const pinturaDesc = p.tipoPintura !== 'Ninguna' ? ` (Incluye Pintura ${p.tipoPintura})` : '';
+                                    return (
+                                        <tr key={p.id}>
+                                            {presupuestoActivo.mostrarLote && (
+                                                <td className="border border-black p-1 font-bold break-words">{p.lote || '-'}</td>
+                                            )}
+                                            <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
+                                            <td className="border border-black p-1 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
+                                            <td className="border border-black p-1">{p.unidad}</td>
+                                            <td className="border border-black p-1">{p.cantidad}</td>
+                                            <td className="border border-black p-1">{p.modulos}</td>
+                                            <td className="border border-black p-1 font-bold">{pzas}</td>
+                                            <td className="border border-black p-1">${fin.precioKgCliente.toFixed(2)}</td>
+                                            <td className="border border-black p-1">{fin.kgTotales.toFixed(2)}</td>
+                                            <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        </tr>
+                                    );
+                                })}
+                                <tr>
+                                    <td colSpan={presupuestoActivo.mostrarLote ? 10 : 9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
+                                    <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                </tr>
+                            </tbody>
+                        </table>
 
-                    {/* LEYENDAS INFERIORES */}
-                    <div className="mt-4 text-[11px] font-bold text-black uppercase space-y-1">
-                        <p className="font-black tracking-wide">PRECIOS NETOS</p>
-                        <p className="font-black tracking-wide">PRECIOS POR KG INCLUYEN PINTURA</p>
+                        {/* LEYENDAS INFERIORES */}
+                        <div className="mt-4 text-[11px] font-bold text-black uppercase space-y-1">
+                            <p className="font-black tracking-wide">PRECIOS NETOS</p>
+                            <p className="font-black tracking-wide">PRECIOS POR KG INCLUYEN PINTURA</p>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         );
     }
