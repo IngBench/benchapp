@@ -2149,9 +2149,9 @@ export default function Presupuestos() {
                                     )}
                                     <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
                                     <th className={`border border-black p-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[32%]' : 'w-[35%]'}`}>Descripción</th>
-                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
-                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
-                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
+                                    <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
+                                    <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
+                                    <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
                                     <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
                                     <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
                                     <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
