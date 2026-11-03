@@ -76,6 +76,7 @@ export default function ControlUsuarios({ usuarioActualId }: ControlUsuariosProp
                     fabricacion: false,
                     catalogo: true,
                     materiales: true,
+                    maquinaria: false,
                     usuarios: false,
                 };
             case 'Residente':
@@ -86,6 +87,7 @@ export default function ControlUsuarios({ usuarioActualId }: ControlUsuariosProp
                     fabricacion: false,
                     catalogo: false,
                     materiales: false,
+                    maquinaria: true,
                     usuarios: false,
                 };
             case 'Taller':
@@ -96,6 +98,7 @@ export default function ControlUsuarios({ usuarioActualId }: ControlUsuariosProp
                     fabricacion: true,
                     catalogo: true,
                     materiales: false,
+                    maquinaria: false,
                     usuarios: false,
                 };
             case 'Personalizado':

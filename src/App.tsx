@@ -11,6 +11,7 @@ import DestajosTaller from './components/DestajosTaller';
 import Presupuestos from './components/Presupuestos';
 import CatalogoMateriales from './components/CatalogoMateriales';
 import ControlUsuarios from './components/ControlUsuarios';
+import MachineryControl from './components/MachineryControl';
 import { PERMISOS_ADMIN, type UsuarioERP, type ModuloApp } from './types';
 
 export default function App() {
@@ -42,8 +43,7 @@ export default function App() {
       if (snapshot.exists()) {
         setPerfilUsuario({ id: snapshot.id, ...snapshot.data() } as UsuarioERP);
       } else {
-        // Si el usuario acaba de iniciar sesión por primera vez y no existe en Firestore,
-        // lo auto-aprovisionamos como Administrador principal para que nunca quede bloqueado
+        // Auto-aprovisionar como Administrador principal al usuario inicial
         const autoAdmin: UsuarioERP = {
           id: usuarioActivo.uid,
           email: usuarioActivo.email || '',
@@ -86,12 +86,12 @@ export default function App() {
     { id: 'fabricacion', label: 'Taller y Destajos', icon: '👨‍🏭' },
     { id: 'catalogo', label: 'Modelos de Herrería', icon: '📐' },
     { id: 'materiales', label: 'Catálogo de Materiales', icon: '🔩' },
+    { id: 'maquinaria', label: 'Control de Maquinaria', icon: '🚜' },
     { id: 'usuarios', label: 'Control de Usuarios', icon: '👥' },
   ];
 
   // Filtrar módulos autorizados según los permisos del usuario
   const modulosAutorizados = menuCompleto.filter(item => {
-    // Si no ha terminado de cargar el perfil o es Administrador, tiene acceso total
     if (!perfilUsuario || perfilUsuario.rol === 'Administrador') return true;
     return perfilUsuario.permisos?.[item.id] === true;
   });
@@ -217,6 +217,7 @@ export default function App() {
         {activeView === 'fabricacion' && <DestajosTaller />}
         {activeView === 'presupuestos' && <Presupuestos />}
         {activeView === 'materiales' && <CatalogoMateriales />}
+        {activeView === 'maquinaria' && <MachineryControl />}
         {activeView === 'usuarios' && <ControlUsuarios usuarioActualId={usuarioActivo.uid} />}
       </div>
       

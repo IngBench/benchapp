@@ -101,6 +101,7 @@ export type ModuloApp =
     | 'fabricacion' 
     | 'catalogo' 
     | 'materiales' 
+    | 'maquinaria'
     | 'usuarios';
 
 export interface PermisosUsuario {
@@ -110,6 +111,7 @@ export interface PermisosUsuario {
     fabricacion: boolean;
     catalogo: boolean;
     materiales: boolean;
+    maquinaria?: boolean;
     usuarios: boolean;
 }
 
@@ -133,6 +135,7 @@ export const LISTA_MODULOS: { id: ModuloApp; nombre: string; icono: string; desc
     { id: 'fabricacion', nombre: 'Taller y Destajos', icono: '👨‍🏭', descripcion: 'Control de destajos, taller y nómina' },
     { id: 'catalogo', nombre: 'Modelos de Herrería', icono: '📐', descripcion: 'Catálogo de modelos estructurales e insumos' },
     { id: 'materiales', nombre: 'Catálogo de Materiales', icono: '🔩', descripcion: 'Perfiles de acero, pesos y medidas' },
+    { id: 'maquinaria', nombre: 'Control de Maquinaria', icono: '🚜', descripcion: 'Horómetros, combustible, rendimiento y operadores' },
     { id: 'usuarios', nombre: 'Control de Usuarios', icono: '👥', descripcion: 'Cuentas de usuario y tabla de permisos de acceso' },
 ];
 
@@ -143,6 +146,7 @@ export const PERMISOS_DEFAULT: PermisosUsuario = {
     fabricacion: false,
     catalogo: false,
     materiales: false,
+    maquinaria: false,
     usuarios: false,
 };
 
@@ -153,6 +157,7 @@ export const PERMISOS_ADMIN: PermisosUsuario = {
     fabricacion: true,
     catalogo: true,
     materiales: true,
+    maquinaria: true,
     usuarios: true,
 };
 
