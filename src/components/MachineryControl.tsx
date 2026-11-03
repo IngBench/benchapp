@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 
 export interface Machine {
   id: string;
+  numero: number; // Número único de la máquina (1, 2, 3...)
   name: string;
   marca: string;
   modelo: string;
@@ -48,6 +49,7 @@ export interface MaintenanceLog {
 const DEFAULT_MACHINES: Machine[] = [
   {
     id: 'retro-426f2',
+    numero: 1,
     name: 'Retro 426F2',
     marca: 'Caterpillar',
     modelo: '426F2',
@@ -57,6 +59,7 @@ const DEFAULT_MACHINES: Machine[] = [
   },
   {
     id: 'manipulador-dl1155',
+    numero: 2,
     name: 'Manipulador DL1155',
     marca: 'Develon',
     modelo: 'DL1155',
@@ -66,6 +69,7 @@ const DEFAULT_MACHINES: Machine[] = [
   },
   {
     id: 'minicargador',
+    numero: 3,
     name: 'Minicargador S590',
     marca: 'Bobcat',
     modelo: 'S590',
@@ -108,7 +112,7 @@ const STORAGE_KEYS = {
 
 export const MachineryControl: React.FC = () => {
   // ============================================================================
-  // 1. ESTADO DE MÁQUINAS (LOCALSTORAGE CON MIGRACIÓN)
+  // 1. ESTADO DE MÁQUINAS (LOCALSTORAGE CON MIGRACIÓN Y CONTROL DE NÚMERO ÚNICO)
   // ============================================================================
   const [machines, setMachines] = useState<Machine[]>(() => {
     try {
@@ -116,15 +120,28 @@ export const MachineryControl: React.FC = () => {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((m: any, idx: number) => ({
-            id: m.id || `mach-${Date.now()}-${idx}`,
-            name: m.name || `${m.marca || ''} ${m.modelo || ''}`.trim() || 'Maquinaria',
-            marca: m.marca || (m.name?.includes('Retro') ? 'Caterpillar' : m.name?.includes('Manipulador') ? 'Develon' : 'Bobcat'),
-            modelo: m.modelo || (m.name?.includes('426F2') ? '426F2' : m.name?.includes('DL1155') ? 'DL1155' : 'S590'),
-            anio: Number(m.anio || m.año) || 2021,
-            type: m.type || 'Maquinaria Pesada',
-            currentHours: Number(m.currentHours) || 0,
-          }));
+          const usedNums = new Set<number>();
+          return parsed.map((m: any, idx: number) => {
+            let num = parseInt(m.numero, 10);
+            if (!num || num <= 0 || usedNums.has(num)) {
+              num = idx + 1;
+              while (usedNums.has(num)) {
+                num++;
+              }
+            }
+            usedNums.add(num);
+
+            return {
+              id: m.id || `mach-${Date.now()}-${idx}`,
+              numero: num,
+              name: m.name || `${m.marca || ''} ${m.modelo || ''}`.trim() || `Máquina ${num}`,
+              marca: m.marca || (m.name?.includes('Retro') ? 'Caterpillar' : m.name?.includes('Manipulador') ? 'Develon' : 'Bobcat'),
+              modelo: m.modelo || (m.name?.includes('426F2') ? '426F2' : m.name?.includes('DL1155') ? 'DL1155' : 'S590'),
+              anio: Number(m.anio || m.año) || 2021,
+              type: m.type || 'Maquinaria Pesada',
+              currentHours: Number(m.currentHours) || 0,
+            };
+          }).sort((a, b) => a.numero - b.numero);
         }
       }
     } catch (e) {
@@ -276,7 +293,7 @@ export const MachineryControl: React.FC = () => {
       id: 'log-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
       date: dailyDate,
       machineId: activeDailyMachine.id,
-      machineName: `${activeDailyMachine.marca} ${activeDailyMachine.modelo} (${activeDailyMachine.name})`,
+      machineName: `Máquina ${activeDailyMachine.numero} - ${activeDailyMachine.marca} ${activeDailyMachine.modelo}`,
       operatorId: activeDailyOperator?.id || '',
       operatorName: activeDailyOperator ? activeDailyOperator.name : 'Sin asignar',
       ticketNumber: ticketNumber.trim(),
@@ -293,7 +310,9 @@ export const MachineryControl: React.FC = () => {
 
     // Actualizar el horómetro actual de la máquina
     setMachines((prev) =>
-      prev.map((m) => (m.id === activeDailyMachine.id ? { ...m, currentHours: parsedFinalHours } : m))
+      prev
+        .map((m) => (m.id === activeDailyMachine.id ? { ...m, currentHours: parsedFinalHours } : m))
+        .sort((a, b) => a.numero - b.numero)
     );
 
     setTicketNumber('');
@@ -302,7 +321,7 @@ export const MachineryControl: React.FC = () => {
     setExtraHours('');
     setBillingNotes('');
     setDailySuccess(
-      `Registro guardado. ${activeDailyMachine.marca} ${activeDailyMachine.modelo}: Horómetro final ${parsedFinalHours.toFixed(1)} hrs (${hoursWorked.toFixed(1)} hrs trab.${extras > 0 ? `, ${extras.toFixed(1)} hrs extra` : ''}).`
+      `Registro guardado. Máquina ${activeDailyMachine.numero} (${activeDailyMachine.marca} ${activeDailyMachine.modelo}): Horómetro final ${parsedFinalHours.toFixed(1)} hrs (${hoursWorked.toFixed(1)} hrs trab.${extras > 0 ? `, ${extras.toFixed(1)} hrs extra` : ''}).`
     );
     setTimeout(() => setDailySuccess(null), 5000);
   };
@@ -351,7 +370,7 @@ export const MachineryControl: React.FC = () => {
       id: 'maint-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
       date: maintDate,
       machineId: activeMaintMachine.id,
-      machineName: `${activeMaintMachine.marca} ${activeMaintMachine.modelo}`,
+      machineName: `Máquina ${activeMaintMachine.numero} - ${activeMaintMachine.marca} ${activeMaintMachine.modelo}`,
       hoursAtService: hoursVal,
       description: maintDescription.trim(),
       createdAt: new Date().toISOString(),
@@ -359,27 +378,42 @@ export const MachineryControl: React.FC = () => {
 
     setMaintenanceLogs((prev) => [newMaint, ...prev]);
     setMaintDescription('');
-    setMaintSuccess(`Servicio registrado para ${activeMaintMachine.marca} ${activeMaintMachine.modelo}.`);
+    setMaintSuccess(`Servicio registrado para Máquina ${activeMaintMachine.numero} (${activeMaintMachine.marca} ${activeMaintMachine.modelo}).`);
     setTimeout(() => setMaintSuccess(null), 5000);
   };
 
   // ============================================================================
-  // GESTIÓN / CRUD DE MÁQUINAS (MARCA, MODELO, AÑO)
+  // GESTIÓN / CRUD DE MÁQUINAS (NÚMERO ÚNICO, MARCA, MODELO, AÑO)
   // ============================================================================
   const [isAddingMachine, setIsAddingMachine] = useState(false);
   const [editingMachineId, setEditingMachineId] = useState<string | null>(null);
+  const [machineError, setMachineError] = useState<string | null>(null);
   const [machineForm, setMachineForm] = useState({
+    numero: 1,
     name: '',
     marca: '',
     modelo: '',
     anio: new Date().getFullYear(),
-    type: 'Maquinaria Pesada',
+    type: 'Retroexcavadora',
     currentHours: 0,
   });
 
+  // Verificación en tiempo real si el número ya existe en otra máquina
+  const duplicateNumberCheck = useMemo(() => {
+    const num = parseInt(String(machineForm.numero), 10);
+    if (!num || num <= 0) return null;
+    return machines.find((m) => m.numero === num && m.id !== editingMachineId) || null;
+  }, [machineForm.numero, machines, editingMachineId]);
+
   const handleOpenAddMachine = () => {
     setEditingMachineId(null);
+    setMachineError(null);
+    // Sugerir el siguiente número disponible sin duplicar
+    const used = machines.map((m) => m.numero || 0);
+    const nextNum = used.length > 0 ? Math.max(...used) + 1 : 1;
+
     setMachineForm({
+      numero: nextNum,
       name: '',
       marca: '',
       modelo: '',
@@ -392,7 +426,9 @@ export const MachineryControl: React.FC = () => {
 
   const handleOpenEditMachine = (m: Machine) => {
     setEditingMachineId(m.id);
+    setMachineError(null);
     setMachineForm({
+      numero: m.numero || 1,
       name: m.name,
       marca: m.marca,
       modelo: m.modelo,
@@ -405,8 +441,25 @@ export const MachineryControl: React.FC = () => {
 
   const handleSaveMachine = (e: React.FormEvent) => {
     e.preventDefault();
+    setMachineError(null);
+
+    const num = parseInt(String(machineForm.numero), 10);
+    if (isNaN(num) || num <= 0) {
+      setMachineError('Por favor especifica un número de máquina válido (entero mayor a 0).');
+      return;
+    }
+
+    // Validar duplicidad de número de máquina
+    const duplicate = machines.find((m) => m.numero === num && m.id !== editingMachineId);
+    if (duplicate) {
+      setMachineError(
+        `El número de máquina ${num} ya está asignado a "${duplicate.marca} ${duplicate.modelo}". Los números de máquina deben ser únicos.`
+      );
+      return;
+    }
+
     if (!machineForm.marca.trim() || !machineForm.modelo.trim()) {
-      alert('Por favor especifica la marca y el modelo de la máquina.');
+      setMachineError('Por favor especifica la marca y el modelo de la máquina.');
       return;
     }
 
@@ -414,23 +467,27 @@ export const MachineryControl: React.FC = () => {
 
     if (editingMachineId) {
       setMachines((prev) =>
-        prev.map((m) =>
-          m.id === editingMachineId
-            ? {
-                ...m,
-                name: displayName,
-                marca: machineForm.marca.trim(),
-                modelo: machineForm.modelo.trim(),
-                anio: Number(machineForm.anio) || new Date().getFullYear(),
-                type: machineForm.type.trim() || 'Maquinaria Pesada',
-                currentHours: Number(machineForm.currentHours) || 0,
-              }
-            : m
-        )
+        prev
+          .map((m) =>
+            m.id === editingMachineId
+              ? {
+                  ...m,
+                  numero: num,
+                  name: displayName,
+                  marca: machineForm.marca.trim(),
+                  modelo: machineForm.modelo.trim(),
+                  anio: Number(machineForm.anio) || new Date().getFullYear(),
+                  type: machineForm.type.trim() || 'Maquinaria Pesada',
+                  currentHours: Number(machineForm.currentHours) || 0,
+                }
+              : m
+          )
+          .sort((a, b) => a.numero - b.numero)
       );
     } else {
       const newMach: Machine = {
         id: 'mach-' + Date.now(),
+        numero: num,
         name: displayName,
         marca: machineForm.marca.trim(),
         modelo: machineForm.modelo.trim(),
@@ -438,7 +495,7 @@ export const MachineryControl: React.FC = () => {
         type: machineForm.type.trim() || 'Maquinaria Pesada',
         currentHours: Number(machineForm.currentHours) || 0,
       };
-      setMachines((prev) => [...prev, newMach]);
+      setMachines((prev) => [...prev, newMach].sort((a, b) => a.numero - b.numero));
     }
 
     setIsAddingMachine(false);
@@ -450,10 +507,11 @@ export const MachineryControl: React.FC = () => {
       alert('Debe existir al menos una máquina en el catálogo.');
       return;
     }
-    if (window.confirm(`¿Estás seguro de eliminar la máquina "${label}" del catálogo?`)) {
-      setMachines((prev) => prev.filter((m) => m.id !== id));
+    if (window.confirm(`¿Estás seguro de eliminar ${label} del catálogo?`)) {
+      setMachines((prev) => prev.filter((m) => m.id !== id).sort((a, b) => a.numero - b.numero));
       if (dashboardMachineId === id) {
-        setDashboardMachineId(machines.find((m) => m.id !== id)?.id || '');
+        const remaining = machines.filter((m) => m.id !== id);
+        setDashboardMachineId(remaining[0]?.id || '');
       }
     }
   };
@@ -672,11 +730,57 @@ export const MachineryControl: React.FC = () => {
           {/* FORMULARIO DE ALTA / EDICIÓN DE MÁQUINA */}
           {isAddingMachine && (
             <form onSubmit={handleSaveMachine} className="bg-gray-800 p-4 rounded-lg border border-red-500/40 space-y-4">
-              <h5 className="text-sm font-bold text-white border-b border-gray-700 pb-2">
-                {editingMachineId ? '✏️ Editar Datos de la Máquina' : '➕ Dar de Alta Nueva Máquina'}
-              </h5>
+              <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                <h5 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>{editingMachineId ? '✏️ Editar Datos de la Máquina' : '➕ Dar de Alta Nueva Máquina'}</span>
+                </h5>
+                <span className="text-xs text-amber-300 font-semibold">
+                  * Cada máquina debe tener un número único
+                </span>
+              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+              {machineError && (
+                <div className="p-3 bg-red-950/80 border border-red-600 text-red-200 rounded-lg text-xs font-bold flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span>{machineError}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+                {/* NÚMERO DE MÁQUINA */}
+                <div>
+                  <label className="block font-bold text-amber-300 mb-1 flex items-center justify-between">
+                    <span>No. Máquina <span className="text-red-400">*</span></span>
+                    {duplicateNumberCheck && (
+                      <span className="text-[10px] text-red-400 font-black">Duplicado</span>
+                    )}
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    required
+                    placeholder="1, 2, 3..."
+                    value={machineForm.numero || ''}
+                    onChange={(e) => {
+                      setMachineForm({ ...machineForm, numero: parseInt(e.target.value, 10) || 0 });
+                      setMachineError(null);
+                    }}
+                    className={`w-full bg-gray-700 border rounded p-2 text-white font-mono font-black text-center ${
+                      duplicateNumberCheck ? 'border-red-500 ring-2 ring-red-500/50 bg-red-950/30' : 'border-amber-500/80'
+                    }`}
+                  />
+                  {duplicateNumberCheck ? (
+                    <span className="text-[10px] text-red-400 block mt-0.5 leading-tight font-semibold">
+                      Ya asignado a {duplicateNumberCheck.marca} {duplicateNumberCheck.modelo}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-emerald-400 block mt-0.5 leading-tight font-semibold">
+                      ✓ Número único
+                    </span>
+                  )}
+                </div>
+
                 <div>
                   <label className="block font-bold text-gray-300 mb-1">
                     Marca <span className="text-red-400">*</span>
@@ -733,7 +837,7 @@ export const MachineryControl: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-gray-300 mb-1">Identificador / Alias</label>
+                  <label className="block font-bold text-gray-300 mb-1">Alias / Identificador</label>
                   <input
                     type="text"
                     placeholder="Ej. Retro 426F2"
@@ -744,7 +848,7 @@ export const MachineryControl: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-amber-300 mb-1">Horómetro Actual (hrs)</label>
+                  <label className="block font-bold text-amber-300 mb-1">Horómetro Inicial (hrs)</label>
                   <input
                     type="number"
                     step="0.1"
@@ -760,16 +864,25 @@ export const MachineryControl: React.FC = () => {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsAddingMachine(false)}
-                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs"
+                  onClick={() => {
+                    setIsAddingMachine(false);
+                    setMachineError(null);
+                  }}
+                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-5 rounded text-xs shadow"
+                  disabled={!!duplicateNumberCheck}
+                  className={`font-bold py-1.5 px-5 rounded text-xs shadow flex items-center gap-1.5 ${
+                    duplicateNumberCheck
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
+                  }`}
                 >
-                  {editingMachineId ? 'Actualizar Máquina' : 'Guardar en Catálogo'}
+                  <span>💾</span>
+                  <span>{editingMachineId ? 'Actualizar Máquina' : 'Guardar en Catálogo'}</span>
                 </button>
               </div>
             </form>
@@ -780,6 +893,7 @@ export const MachineryControl: React.FC = () => {
             <table className="w-full text-left text-xs">
               <thead className="bg-gray-900 text-gray-300 uppercase tracking-wider text-[11px] border-b border-gray-700">
                 <tr>
+                  <th className="p-3 text-center">No. Máquina</th>
                   <th className="p-3">Marca</th>
                   <th className="p-3">Modelo</th>
                   <th className="p-3 text-center">Año</th>
@@ -792,6 +906,12 @@ export const MachineryControl: React.FC = () => {
               <tbody className="divide-y divide-gray-700/60 bg-gray-800/60">
                 {machines.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-700/40">
+                    <td className="p-3 text-center">
+                      <span className="bg-red-950/80 border border-red-500/60 text-white font-black px-2.5 py-1 rounded text-xs font-mono inline-flex items-center gap-1">
+                        <span>🚜</span>
+                        <span>Máquina {m.numero}</span>
+                      </span>
+                    </td>
                     <td className="p-3 font-bold text-white uppercase">{m.marca}</td>
                     <td className="p-3 font-black text-amber-300 font-mono text-sm">{m.modelo}</td>
                     <td className="p-3 text-center font-semibold text-gray-300">{m.anio}</td>
@@ -808,14 +928,14 @@ export const MachineryControl: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleOpenEditMachine(m)}
-                        className="bg-blue-900/60 hover:bg-blue-700 text-blue-200 px-2.5 py-1 rounded font-bold text-[11px] border border-blue-700/50"
+                        className="bg-blue-900/60 hover:bg-blue-700 text-blue-200 px-2.5 py-1 rounded font-bold text-[11px] border border-blue-700/50 cursor-pointer"
                       >
                         Editar
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDeleteMachine(m.id, `${m.marca} ${m.modelo}`)}
-                        className="bg-red-900/40 hover:bg-red-700 text-red-300 px-2.5 py-1 rounded font-bold text-[11px] border border-red-700/50"
+                        onClick={() => handleDeleteMachine(m.id, `Máquina ${m.numero} (${m.marca} ${m.modelo})`)}
+                        className="bg-red-900/40 hover:bg-red-700 text-red-300 px-2.5 py-1 rounded font-bold text-[11px] border border-red-700/50 cursor-pointer"
                       >
                         Eliminar
                       </button>
@@ -1001,8 +1121,8 @@ export const MachineryControl: React.FC = () => {
             </div>
           </div>
 
-          {/* BOTONES SELECTORES DE MÁQUINA */}
-          <div className="flex flex-wrap gap-2">
+          {/* BOTONES SELECTORES DE MÁQUINA: ÍCONO Y NÚMERO */}
+          <div className="flex flex-wrap items-center gap-2">
             {machines.map((mach) => {
               const isSelected = mach.id === dashboardMachineId;
               return (
@@ -1010,21 +1130,74 @@ export const MachineryControl: React.FC = () => {
                   key={mach.id}
                   type="button"
                   onClick={() => setDashboardMachineId(mach.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-2 ${
+                  title={`Máquina ${mach.numero}: ${mach.marca} ${mach.modelo} (${mach.anio}) - ${mach.currentHours.toFixed(1)} hrs`}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black border transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
                     isSelected
-                      ? 'bg-red-600 border-red-500 text-white shadow-lg'
+                      ? 'bg-red-600 border-red-500 text-white shadow-lg ring-2 ring-red-400/50 scale-105'
                       : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white'
                   }`}
                 >
-                  <span>{mach.marca} {mach.modelo}</span>
-                  <span className="text-[10px] bg-black/30 px-1.5 py-0.5 rounded text-gray-200 font-mono">
-                    {mach.currentHours.toFixed(1)} hrs
-                  </span>
+                  <span className="text-base leading-none">🚜</span>
+                  <span>Máquina {mach.numero}</span>
                 </button>
               );
             })}
           </div>
         </div>
+
+        {/* PANEL DE DETALLE DE LA MÁQUINA SELECCIONADA */}
+        {selectedDashMachine && (
+          <div className="mb-4 bg-gray-800/90 rounded-lg p-3.5 border border-gray-700/80 flex flex-wrap items-center justify-between gap-3 shadow-inner">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-red-600/20 border border-red-500/40 text-red-400 flex items-center justify-center text-xl shrink-0">
+                🚜
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-white font-black text-sm uppercase tracking-wide">
+                    Máquina {selectedDashMachine.numero}: {selectedDashMachine.marca} {selectedDashMachine.modelo}
+                  </span>
+                  <span className="bg-gray-700 text-gray-300 px-2 py-0.5 rounded text-[10px] font-bold">
+                    Año {selectedDashMachine.anio}
+                  </span>
+                  <span className="bg-blue-950/80 border border-blue-500/50 text-blue-300 px-2 py-0.5 rounded text-[10px] font-semibold">
+                    {selectedDashMachine.type}
+                  </span>
+                  {selectedDashMachine.name && (
+                    <span className="text-gray-400 text-[11px]">
+                      • Alias: <span className="text-gray-300 font-medium">{selectedDashMachine.name}</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400 mt-1">
+                  <span>
+                    Horómetro actual: <strong className="text-amber-400 font-mono font-bold">{selectedDashMachine.currentHours.toFixed(1)} hrs</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Jornadas registradas: <strong className="text-blue-300 font-mono font-bold">{dashStats.totalLogs}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Servicios mecánicos: <strong className="text-indigo-300 font-mono font-bold">{dashStats.totalServices}</strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('machines');
+                handleOpenEditMachine(selectedDashMachine);
+              }}
+              className="text-[11px] bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <span>✏️</span>
+              <span>Ver / Editar Ficha Máquina {selectedDashMachine.numero}</span>
+            </button>
+          </div>
+        )}
 
         {/* TARJETAS DE ESTADÍSTICAS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1039,7 +1212,7 @@ export const MachineryControl: React.FC = () => {
               <span className="text-xs font-normal text-gray-400">hrs</span>
             </div>
             <span className="text-[11px] text-gray-400 block mt-1">
-              {selectedDashMachine?.marca} {selectedDashMachine?.modelo} ({selectedDashMachine?.anio})
+              Máquina #{selectedDashMachine?.numero} • {selectedDashMachine?.marca} {selectedDashMachine?.modelo}
             </span>
           </div>
 
@@ -1181,7 +1354,7 @@ export const MachineryControl: React.FC = () => {
               >
                 {machines.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.marca} {m.modelo} ({m.anio})
+                    🚜 Máquina {m.numero} - {m.marca} {m.modelo} ({m.anio})
                   </option>
                 ))}
               </select>
@@ -1371,7 +1544,7 @@ export const MachineryControl: React.FC = () => {
               >
                 {machines.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.marca} {m.modelo} ({m.anio})
+                    🚜 Máquina {m.numero} - {m.marca} {m.modelo} ({m.anio})
                   </option>
                 ))}
               </select>
@@ -1479,7 +1652,7 @@ export const MachineryControl: React.FC = () => {
               <option value="all">Todas las Máquinas ({dailyLogs.length})</option>
               {machines.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.marca} {m.modelo}
+                  🚜 Máquina {m.numero} - {m.marca} {m.modelo}
                 </option>
               ))}
             </select>
