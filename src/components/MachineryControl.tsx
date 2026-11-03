@@ -19,9 +19,19 @@ export interface Operator {
   phone: string;
 }
 
+export interface MachineryLocation {
+  id: string;
+  name: string; // Nombre del frente u obra (ej. "Parques del Palmar")
+  client?: string; // Cliente o desarrollador
+  city?: string; // Ubicación, municipio o dirección
+  notes?: string; // Notas adicionales
+}
+
 export interface DailyLog {
   id: string;
   date: string;
+  locationId?: string;
+  locationName: string; // Ubicación / Obra donde laboró la máquina
   machineId: string;
   machineName: string;
   operatorId?: string;
@@ -45,6 +55,30 @@ export interface MaintenanceLog {
   description: string;
   createdAt: string;
 }
+
+const DEFAULT_LOCATIONS: MachineryLocation[] = [
+  {
+    id: 'loc-1',
+    name: 'Parques del Palmar',
+    client: 'Grupo San Carlos',
+    city: 'Tlaquepaque, Jal.',
+    notes: 'Frente principal / Herrería general',
+  },
+  {
+    id: 'loc-2',
+    name: 'Taller Central Bench',
+    client: 'Bench Ingeniería',
+    city: 'Guadalajara, Jal.',
+    notes: 'Patio de maniobras y resguardo de equipo',
+  },
+  {
+    id: 'loc-3',
+    name: 'Desarrollo La Cima',
+    client: 'Constructora Atlas',
+    city: 'Zapopan, Jal.',
+    notes: 'Movimiento de tierra y plataformas',
+  },
+];
 
 const DEFAULT_MACHINES: Machine[] = [
   {
@@ -106,6 +140,7 @@ const DEFAULT_OPERATORS: Operator[] = [
 const STORAGE_KEYS = {
   MACHINES: 'bench_machinery_machines',
   OPERATORS: 'bench_machinery_operators',
+  LOCATIONS: 'bench_machinery_locations',
   DAILY_LOGS: 'bench_machinery_daily_logs',
   MAINTENANCE_LOGS: 'bench_machinery_maintenance_logs',
 };
@@ -167,7 +202,23 @@ export const MachineryControl: React.FC = () => {
   });
 
   // ============================================================================
-  // 3. REGISTROS DIARIOS Y MANTENIMIENTOS
+  // 3. ESTADO DE UBICACIONES / OBRAS (LOCALSTORAGE)
+  // ============================================================================
+  const [locations, setLocations] = useState<MachineryLocation[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.LOCATIONS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error('Error cargando ubicaciones:', e);
+    }
+    return DEFAULT_LOCATIONS;
+  });
+
+  // ============================================================================
+  // 4. REGISTROS DIARIOS Y MANTENIMIENTOS
   // ============================================================================
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => {
     try {
@@ -178,6 +229,8 @@ export const MachineryControl: React.FC = () => {
           return parsed.map((log: any) => ({
             ...log,
             ticketNumber: log.ticketNumber || '',
+            locationId: log.locationId || '',
+            locationName: log.locationName || log.ubicacion || 'Parques del Palmar',
             extraHours: Number(log.extraHours) || 0,
           }));
         }
@@ -208,6 +261,10 @@ export const MachineryControl: React.FC = () => {
   }, [operators]);
 
   useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(locations));
+  }, [locations]);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.DAILY_LOGS, JSON.stringify(dailyLogs));
   }, [dailyLogs]);
 
@@ -216,7 +273,7 @@ export const MachineryControl: React.FC = () => {
   }, [maintenanceLogs]);
 
   // Pestaña activa del módulo
-  const [activeTab, setActiveTab] = useState<'daily' | 'maintenance' | 'machines' | 'operators'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'maintenance' | 'machines' | 'operators' | 'locations'>('daily');
 
   // Máquina seleccionada para el Dashboard
   const [dashboardMachineId, setDashboardMachineId] = useState<string>(
@@ -232,6 +289,7 @@ export const MachineryControl: React.FC = () => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [dailyMachineId, setDailyMachineId] = useState<string>(machines[0]?.id || '');
   const [dailyOperatorId, setDailyOperatorId] = useState<string>(operators[0]?.id || '');
+  const [dailyLocationId, setDailyLocationId] = useState<string>(locations[0]?.id || '');
   const [dailyDate, setDailyDate] = useState<string>(todayStr);
   const [ticketNumber, setTicketNumber] = useState<string>(''); // No. de Vale / Folio
   const [fuelLiters, setFuelLiters] = useState<string>('');
@@ -241,9 +299,10 @@ export const MachineryControl: React.FC = () => {
   const [dailyError, setDailyError] = useState<string | null>(null);
   const [dailySuccess, setDailySuccess] = useState<string | null>(null);
 
-  // Máquina y operador activos
+  // Máquina, operador y ubicación activos
   const activeDailyMachine = machines.find((m) => m.id === dailyMachineId) || machines[0];
   const activeDailyOperator = operators.find((op) => op.id === dailyOperatorId);
+  const activeDailyLocation = locations.find((l) => l.id === dailyLocationId) || locations[0];
   const initialHours = activeDailyMachine ? activeDailyMachine.currentHours : 0;
 
   // Cálculo en tiempo real de horas trabajadas
@@ -292,6 +351,8 @@ export const MachineryControl: React.FC = () => {
     const newLog: DailyLog = {
       id: 'log-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
       date: dailyDate,
+      locationId: activeDailyLocation?.id || '',
+      locationName: activeDailyLocation ? activeDailyLocation.name : 'Ubicación General',
       machineId: activeDailyMachine.id,
       machineName: `Máquina ${activeDailyMachine.numero} - ${activeDailyMachine.marca} ${activeDailyMachine.modelo}`,
       operatorId: activeDailyOperator?.id || '',
@@ -592,6 +653,107 @@ export const MachineryControl: React.FC = () => {
     }
   };
 
+  // ============================================================================
+  // GESTIÓN / CRUD DE UBICACIONES / OBRAS
+  // ============================================================================
+  const [isAddingLocation, setIsAddingLocation] = useState(false);
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationForm, setLocationForm] = useState({
+    name: '',
+    client: '',
+    city: '',
+    notes: '',
+  });
+
+  const handleOpenAddLocation = () => {
+    setEditingLocationId(null);
+    setLocationError(null);
+    setLocationForm({
+      name: '',
+      client: '',
+      city: '',
+      notes: '',
+    });
+    setIsAddingLocation(true);
+  };
+
+  const handleOpenEditLocation = (loc: MachineryLocation) => {
+    setEditingLocationId(loc.id);
+    setLocationError(null);
+    setLocationForm({
+      name: loc.name,
+      client: loc.client || '',
+      city: loc.city || '',
+      notes: loc.notes || '',
+    });
+    setIsAddingLocation(true);
+  };
+
+  const handleSaveLocation = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocationError(null);
+
+    const trimmedName = locationForm.name.trim();
+    if (!trimmedName) {
+      setLocationError('Por favor ingresa el nombre de la obra o ubicación.');
+      return;
+    }
+
+    const duplicate = locations.find(
+      (l) => l.name.toLowerCase().trim() === trimmedName.toLowerCase() && l.id !== editingLocationId
+    );
+    if (duplicate) {
+      setLocationError(`Ya existe una ubicación registrada como "${duplicate.name}".`);
+      return;
+    }
+
+    if (editingLocationId) {
+      setLocations((prev) =>
+        prev.map((l) =>
+          l.id === editingLocationId
+            ? {
+                ...l,
+                name: trimmedName,
+                client: locationForm.client.trim(),
+                city: locationForm.city.trim(),
+                notes: locationForm.notes.trim(),
+              }
+            : l
+        )
+      );
+    } else {
+      const newLoc: MachineryLocation = {
+        id: 'loc-' + Date.now(),
+        name: trimmedName,
+        client: locationForm.client.trim(),
+        city: locationForm.city.trim(),
+        notes: locationForm.notes.trim(),
+      };
+      setLocations((prev) => [...prev, newLoc]);
+      if (!dailyLocationId) {
+        setDailyLocationId(newLoc.id);
+      }
+    }
+
+    setIsAddingLocation(false);
+    setEditingLocationId(null);
+  };
+
+  const handleDeleteLocation = (id: string, name: string) => {
+    if (locations.length <= 1) {
+      alert('Debe existir al menos una ubicación en el catálogo.');
+      return;
+    }
+    if (window.confirm(`¿Estás seguro de eliminar la ubicación "${name}" del catálogo?`)) {
+      setLocations((prev) => prev.filter((l) => l.id !== id));
+      if (dailyLocationId === id) {
+        const remaining = locations.filter((l) => l.id !== id);
+        setDailyLocationId(remaining[0]?.id || '');
+      }
+    }
+  };
+
   const handleDeleteDailyLog = (id: string) => {
     if (window.confirm('¿Deseas eliminar este registro de operación diaria?')) {
       setDailyLogs((prev) => prev.filter((log) => log.id !== id));
@@ -698,6 +860,17 @@ export const MachineryControl: React.FC = () => {
             }`}
           >
             <span>👷</span> Base Operadores ({operators.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('locations')}
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeTab === 'locations'
+                ? 'bg-cyan-600 text-white shadow'
+                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+            }`}
+          >
+            <span>📍</span> Base Ubicaciones ({locations.length})
           </button>
         </div>
       </div>
@@ -1105,6 +1278,179 @@ export const MachineryControl: React.FC = () => {
       )}
 
       {/* ======================================================================== */}
+      {/* PESTAÑA: BASE DE DATOS DE UBICACIONES / OBRAS */}
+      {/* ======================================================================== */}
+      {activeTab === 'locations' && (
+        <div className="bg-gray-900/80 p-5 rounded-lg border border-gray-700 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 pb-3">
+            <div>
+              <h4 className="text-lg font-bold text-white flex items-center gap-2">
+                <span>📍</span> Base de Datos de Ubicaciones / Obras
+              </h4>
+              <p className="text-xs text-gray-400">
+                Catálogo de obras, desarrollos y frentes de trabajo donde opera la maquinaria pesada.
+              </p>
+            </div>
+            {!isAddingLocation && (
+              <button
+                type="button"
+                onClick={handleOpenAddLocation}
+                className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded-lg text-xs transition-colors flex items-center gap-2 shadow cursor-pointer"
+              >
+                <span>+</span> Dar de Alta Ubicación
+              </button>
+            )}
+          </div>
+
+          {/* FORMULARIO DE ALTA / EDICIÓN DE UBICACIÓN */}
+          {isAddingLocation && (
+            <form onSubmit={handleSaveLocation} className="bg-gray-800 p-4 rounded-lg border border-cyan-500/40 space-y-4">
+              <h5 className="text-sm font-bold text-white border-b border-gray-700 pb-2">
+                {editingLocationId ? '✏️ Editar Datos de la Ubicación' : '➕ Dar de Alta Nueva Ubicación'}
+              </h5>
+
+              {locationError && (
+                <div className="p-3 bg-red-950/80 border border-red-600 text-red-200 rounded-lg text-xs font-bold flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span>{locationError}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block font-bold text-gray-300 mb-1">
+                    Nombre del Frente / Obra <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. Parques del Palmar, Desarrollo La Cima"
+                    value={locationForm.name}
+                    onChange={(e) => {
+                      setLocationForm({ ...locationForm, name: e.target.value });
+                      setLocationError(null);
+                    }}
+                    className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-gray-300 mb-1">
+                    Ciudad / Dirección / Referencia
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Tlaquepaque, Jal. / Periférico Sur"
+                    value={locationForm.city}
+                    onChange={(e) => setLocationForm({ ...locationForm, city: e.target.value })}
+                    className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-gray-300 mb-1">
+                    Cliente / Desarrollador
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Grupo San Carlos, Constructora Atlas"
+                    value={locationForm.client}
+                    onChange={(e) => setLocationForm({ ...locationForm, client: e.target.value })}
+                    className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block font-bold text-gray-300 mb-1">Notas Adicionales</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Tramo de terracerías, acceso por puerta 2..."
+                    value={locationForm.notes}
+                    onChange={(e) => setLocationForm({ ...locationForm, notes: e.target.value })}
+                    className="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingLocation(false);
+                    setLocationError(null);
+                  }}
+                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-5 rounded text-xs shadow cursor-pointer"
+                >
+                  {editingLocationId ? 'Actualizar Ubicación' : 'Guardar en Catálogo'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* TABLA DE UBICACIONES */}
+          <div className="overflow-x-auto rounded-lg border border-gray-700">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-900 text-gray-300 uppercase tracking-wider text-[11px] border-b border-gray-700">
+                <tr>
+                  <th className="p-3">Nombre del Frente / Obra</th>
+                  <th className="p-3">Ciudad / Dirección</th>
+                  <th className="p-3">Cliente / Desarrollador</th>
+                  <th className="p-3">Notas</th>
+                  <th className="p-3 text-center">Jornadas Registradas</th>
+                  <th className="p-3 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700/60 bg-gray-800/60">
+                {locations.map((loc) => {
+                  const usageCount = dailyLogs.filter(
+                    (log) => log.locationId === loc.id || log.locationName === loc.name
+                  ).length;
+                  return (
+                    <tr key={loc.id} className="hover:bg-gray-700/40">
+                      <td className="p-3 font-bold text-white flex items-center gap-2">
+                        <span className="text-base text-cyan-400">📍</span>
+                        <span className="text-cyan-300">{loc.name}</span>
+                      </td>
+                      <td className="p-3 text-gray-300">{loc.city || '-'}</td>
+                      <td className="p-3 text-gray-300 font-semibold">{loc.client || '-'}</td>
+                      <td className="p-3 text-gray-400 italic">{loc.notes || '-'}</td>
+                      <td className="p-3 text-center">
+                        <span className="bg-gray-700 text-gray-200 px-2 py-0.5 rounded text-[11px] font-mono font-bold">
+                          {usageCount} jornadas
+                        </span>
+                      </td>
+                      <td className="p-3 text-center space-x-2 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditLocation(loc)}
+                          className="bg-blue-900/60 hover:bg-blue-700 text-blue-200 px-2.5 py-1 rounded font-bold text-[11px] border border-blue-700/50 cursor-pointer"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLocation(loc.id, loc.name)}
+                          className="bg-red-900/40 hover:bg-red-700 text-red-300 px-2.5 py-1 rounded font-bold text-[11px] border border-red-700/50 cursor-pointer"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================================== */}
       {/* DASHBOARD DE RENDIMIENTO (VISIBLE EN TODAS LAS PESTAÑAS) */}
       {/* ======================================================================== */}
       <div className="bg-gray-900/80 p-5 rounded-lg border border-gray-700">
@@ -1309,8 +1655,8 @@ export const MachineryControl: React.FC = () => {
             </div>
           )}
 
-          {/* FILA 1: FECHA, NO. DE VALE, MÁQUINA, OPERADOR */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* FILA 1: FECHA, NO. DE VALE, UBICACIÓN / OBRA, MÁQUINA, OPERADOR */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {/* FECHA */}
             <div>
               <label className="block text-xs font-bold text-gray-300 mb-1">
@@ -1337,6 +1683,36 @@ export const MachineryControl: React.FC = () => {
                 onChange={(e) => setTicketNumber(e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white font-mono uppercase focus:ring-red-500 focus:border-red-500"
               />
+            </div>
+
+            {/* UBICACIÓN / OBRA */}
+            <div>
+              <label className="block text-xs font-bold text-cyan-300 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">📍 Ubicación / Obra <span className="text-red-400">*</span></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('locations');
+                    handleOpenAddLocation();
+                  }}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-200 underline font-semibold cursor-pointer"
+                  title="Dar de alta nueva ubicación en el catálogo"
+                >
+                  + Nueva
+                </button>
+              </label>
+              <select
+                required
+                value={dailyLocationId}
+                onChange={(e) => setDailyLocationId(e.target.value)}
+                className="w-full bg-gray-700 border border-cyan-600/50 rounded-lg p-2.5 text-sm text-white focus:ring-cyan-500 focus:border-cyan-500 font-semibold"
+              >
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    📍 {loc.name} {loc.city ? `(${loc.city})` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* MÁQUINA */}
@@ -1666,6 +2042,7 @@ export const MachineryControl: React.FC = () => {
               <tr>
                 <th className="p-3">Fecha</th>
                 <th className="p-3">No. Vale</th>
+                <th className="p-3 text-cyan-300">Ubicación / Obra</th>
                 <th className="p-3">Máquina</th>
                 <th className="p-3">Operador</th>
                 <th className="p-3 text-right">Horóm. Inicial</th>
@@ -1681,7 +2058,7 @@ export const MachineryControl: React.FC = () => {
             <tbody className="divide-y divide-gray-700/60 bg-gray-800/60">
               {filteredDailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="p-8 text-center text-gray-400 italic">
+                  <td colSpan={13} className="p-8 text-center text-gray-400 italic">
                     No hay registros de operación diaria guardados.
                   </td>
                 </tr>
@@ -1706,6 +2083,13 @@ export const MachineryControl: React.FC = () => {
                         ) : (
                           <span className="text-gray-500 font-mono text-[11px]">-</span>
                         )}
+                      </td>
+                      {/* UBICACIÓN */}
+                      <td className="p-3 whitespace-nowrap">
+                        <span className="bg-cyan-950/80 border border-cyan-600/50 text-cyan-300 font-bold px-2 py-0.5 rounded text-[11px] inline-flex items-center gap-1">
+                          <span>📍</span>
+                          <span>{log.locationName || 'General'}</span>
+                        </span>
                       </td>
                       <td className="p-3">
                         <span className="font-bold text-white block">{log.machineName}</span>
