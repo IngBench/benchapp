@@ -25,10 +25,12 @@ export interface DailyLog {
   machineName: string;
   operatorId?: string;
   operatorName?: string;
+  ticketNumber?: string; // No. de Vale / Folio de Campo
   fuelLiters: number;
   initialHours: number;
   finalHours: number;
-  hoursWorked: number;
+  hoursWorked: number; // Total horas = finalHours - initialHours
+  extraHours: number; // Horas extraordinarias identificadas para cobro
   billingNotes: string;
   createdAt: string;
 }
@@ -114,7 +116,6 @@ export const MachineryControl: React.FC = () => {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Asegurar que cada máquina tenga marca, modelo y año
           return parsed.map((m: any, idx: number) => ({
             id: m.id || `mach-${Date.now()}-${idx}`,
             name: m.name || `${m.marca || ''} ${m.modelo || ''}`.trim() || 'Maquinaria',
@@ -154,7 +155,16 @@ export const MachineryControl: React.FC = () => {
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.DAILY_LOGS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((log: any) => ({
+            ...log,
+            ticketNumber: log.ticketNumber || '',
+            extraHours: Number(log.extraHours) || 0,
+          }));
+        }
+      }
     } catch (e) {
       console.error('Error cargando registros diarios:', e);
     }
@@ -206,8 +216,10 @@ export const MachineryControl: React.FC = () => {
   const [dailyMachineId, setDailyMachineId] = useState<string>(machines[0]?.id || '');
   const [dailyOperatorId, setDailyOperatorId] = useState<string>(operators[0]?.id || '');
   const [dailyDate, setDailyDate] = useState<string>(todayStr);
+  const [ticketNumber, setTicketNumber] = useState<string>(''); // No. de Vale / Folio
   const [fuelLiters, setFuelLiters] = useState<string>('');
   const [finalHours, setFinalHours] = useState<string>('');
+  const [extraHours, setExtraHours] = useState<string>(''); // Horas Extras
   const [billingNotes, setBillingNotes] = useState<string>('');
   const [dailyError, setDailyError] = useState<string | null>(null);
   const [dailySuccess, setDailySuccess] = useState<string | null>(null);
@@ -252,6 +264,12 @@ export const MachineryControl: React.FC = () => {
       return;
     }
 
+    const extras = parseFloat(extraHours) || 0;
+    if (extras < 0) {
+      setDailyError('Las horas extras no pueden ser un valor negativo.');
+      return;
+    }
+
     const hoursWorked = parsedFinalHours - initialHours;
 
     const newLog: DailyLog = {
@@ -261,26 +279,30 @@ export const MachineryControl: React.FC = () => {
       machineName: `${activeDailyMachine.marca} ${activeDailyMachine.modelo} (${activeDailyMachine.name})`,
       operatorId: activeDailyOperator?.id || '',
       operatorName: activeDailyOperator ? activeDailyOperator.name : 'Sin asignar',
+      ticketNumber: ticketNumber.trim(),
       fuelLiters: liters,
       initialHours: initialHours,
       finalHours: parsedFinalHours,
       hoursWorked: hoursWorked,
+      extraHours: extras,
       billingNotes: billingNotes.trim(),
       createdAt: new Date().toISOString(),
     };
 
     setDailyLogs((prev) => [newLog, ...prev]);
 
-    // Actualizar el horómetro de la máquina
+    // Actualizar el horómetro actual de la máquina
     setMachines((prev) =>
       prev.map((m) => (m.id === activeDailyMachine.id ? { ...m, currentHours: parsedFinalHours } : m))
     );
 
+    setTicketNumber('');
     setFuelLiters('');
     setFinalHours('');
+    setExtraHours('');
     setBillingNotes('');
     setDailySuccess(
-      `Registro guardado. Nuevo horómetro de ${activeDailyMachine.marca} ${activeDailyMachine.modelo}: ${parsedFinalHours.toFixed(1)} hrs.`
+      `Registro guardado. ${activeDailyMachine.marca} ${activeDailyMachine.modelo}: Horómetro final ${parsedFinalHours.toFixed(1)} hrs (${hoursWorked.toFixed(1)} hrs trab.${extras > 0 ? `, ${extras.toFixed(1)} hrs extra` : ''}).`
     );
     setTimeout(() => setDailySuccess(null), 5000);
   };
@@ -337,7 +359,7 @@ export const MachineryControl: React.FC = () => {
 
     setMaintenanceLogs((prev) => [newMaint, ...prev]);
     setMaintDescription('');
-    setMaintSuccess(`Servicio registrado exitosamente para ${activeMaintMachine.marca} ${activeMaintMachine.modelo}.`);
+    setMaintSuccess(`Servicio registrado para ${activeMaintMachine.marca} ${activeMaintMachine.modelo}.`);
     setTimeout(() => setMaintSuccess(null), 5000);
   };
 
@@ -531,17 +553,19 @@ export const MachineryControl: React.FC = () => {
 
   const dashStats = useMemo(() => {
     if (!selectedDashMachine) {
-      return { totalHours: 0, totalFuel: 0, litersPerHour: 0, totalLogs: 0, totalServices: 0 };
+      return { totalHours: 0, totalExtraHours: 0, totalFuel: 0, litersPerHour: 0, totalLogs: 0, totalServices: 0 };
     }
 
     const machineLogs = dailyLogs.filter((log) => log.machineId === selectedDashMachine.id);
     const totalHours = machineLogs.reduce((acc, log) => acc + (log.hoursWorked || 0), 0);
+    const totalExtraHours = machineLogs.reduce((acc, log) => acc + (log.extraHours || 0), 0);
     const totalFuel = machineLogs.reduce((acc, log) => acc + (log.fuelLiters || 0), 0);
     const litersPerHour = totalHours > 0 ? totalFuel / totalHours : 0;
     const servicesCount = maintenanceLogs.filter((m) => m.machineId === selectedDashMachine.id).length;
 
     return {
       totalHours,
+      totalExtraHours,
       totalFuel,
       litersPerHour,
       totalLogs: machineLogs.length,
@@ -567,7 +591,7 @@ export const MachineryControl: React.FC = () => {
             <span>🚜</span> Control y Rendimiento de Maquinaria Pesada
           </h3>
           <p className="text-sm text-gray-400 mt-1">
-            Gestión de catálogos de máquinas, operadores, horómetros diarios, combustible y mantenimientos.
+            Gestión de catálogos de máquinas, operadores, horómetros diarios, horas extras, vales de campo y mantenimientos.
           </p>
         </div>
 
@@ -972,7 +996,7 @@ export const MachineryControl: React.FC = () => {
                 Dashboard de Rendimiento
               </h4>
               <p className="text-xs text-gray-400">
-                Selecciona una máquina para auditar su rendimiento histórico y horas acumuladas.
+                Selecciona una máquina para auditar su rendimiento histórico, horas acumuladas y horas extras.
               </p>
             </div>
           </div>
@@ -1003,7 +1027,7 @@ export const MachineryControl: React.FC = () => {
         </div>
 
         {/* TARJETAS DE ESTADÍSTICAS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {/* Horómetro Actual */}
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-sm">
             <div className="flex items-center justify-between text-gray-400 text-xs font-semibold mb-1">
@@ -1034,6 +1058,21 @@ export const MachineryControl: React.FC = () => {
             </span>
           </div>
 
+          {/* Total Horas Extras */}
+          <div className="bg-gray-800 p-4 rounded-lg border border-amber-600/50 bg-gradient-to-br from-gray-800 to-amber-950/30 shadow-sm">
+            <div className="flex items-center justify-between text-amber-300 text-xs font-bold mb-1">
+              <span>HORAS EXTRAS</span>
+              <span className="text-base">⭐</span>
+            </div>
+            <div className="text-2xl font-black text-amber-300 font-mono">
+              {dashStats.totalExtraHours.toFixed(1)}{' '}
+              <span className="text-xs font-normal text-amber-400">hrs</span>
+            </div>
+            <span className="text-[11px] text-amber-200/80 block mt-1">
+              Extraordinarias a cobrar
+            </span>
+          </div>
+
           {/* Total Litros Consumidos */}
           <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-sm">
             <div className="flex items-center justify-between text-gray-400 text-xs font-semibold mb-1">
@@ -1055,7 +1094,7 @@ export const MachineryControl: React.FC = () => {
             </div>
             <div className="text-2xl font-black text-white flex items-baseline gap-1 font-mono">
               <span>{dashStats.litersPerHour.toFixed(2)}</span>
-              <span className="text-xs font-semibold text-indigo-300">Litros / Hora</span>
+              <span className="text-xs font-semibold text-indigo-300">L / h</span>
             </div>
             <span className="text-[11px] text-indigo-200 block mt-1">
               {dashStats.totalHours > 0
@@ -1079,7 +1118,7 @@ export const MachineryControl: React.FC = () => {
               <span>📋</span> Nuevo Registro Diario de Operación
             </h4>
             <span className="text-xs text-gray-400">
-              El horómetro inicial se autocompleta con el último registro de la máquina.
+              Registra los horómetros, horas extraordinarias y número de vale para cobro.
             </span>
           </div>
 
@@ -1097,7 +1136,8 @@ export const MachineryControl: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
+          {/* FILA 1: FECHA, NO. DE VALE, MÁQUINA, OPERADOR */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* FECHA */}
             <div>
               <label className="block text-xs font-bold text-gray-300 mb-1">
@@ -1109,6 +1149,20 @@ export const MachineryControl: React.FC = () => {
                 value={dailyDate}
                 onChange={(e) => setDailyDate(e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white focus:ring-red-500 focus:border-red-500"
+              />
+            </div>
+
+            {/* NO. DE VALE / FOLIO DE CAMPO */}
+            <div>
+              <label className="block text-xs font-bold text-gray-300 mb-1 flex items-center gap-1">
+                <span>📄</span> No. de Vale / Folio de Campo
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. V-1045, Folio 892"
+                value={ticketNumber}
+                onChange={(e) => setTicketNumber(e.target.value)}
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white font-mono uppercase focus:ring-red-500 focus:border-red-500"
               />
             </div>
 
@@ -1151,7 +1205,10 @@ export const MachineryControl: React.FC = () => {
                 ))}
               </select>
             </div>
+          </div>
 
+          {/* FILA 2: COMBUSTIBLE, HORÓMETRO INICIAL, HORÓMETRO FINAL, HORAS EXTRAS */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* COMBUSTIBLE CARGADO */}
             <div>
               <label className="block text-xs font-bold text-gray-300 mb-1">
@@ -1190,7 +1247,7 @@ export const MachineryControl: React.FC = () => {
                 <span>Horóm. Final <span className="text-red-400">*</span></span>
                 {calculatedHoursWorked !== null && (
                   <span className="text-[10px] text-cyan-300 font-bold font-mono">
-                    +{calculatedHoursWorked.toFixed(1)} hrs
+                    +{calculatedHoursWorked.toFixed(1)} hrs tot.
                   </span>
                 )}
               </label>
@@ -1205,6 +1262,27 @@ export const MachineryControl: React.FC = () => {
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white font-bold focus:ring-red-500 focus:border-red-500 font-mono"
               />
             </div>
+
+            {/* HORAS EXTRAS (DESTACADAS PARA IDENTIFICACIÓN Y COBRO) */}
+            <div>
+              <label className="block text-xs font-bold text-amber-300 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">⭐ Horas Extras (Cobro)</span>
+                {calculatedHoursWorked !== null && parseFloat(extraHours) > 0 && (
+                  <span className="text-[10px] text-amber-300 font-bold font-mono">
+                    de {calculatedHoursWorked.toFixed(1)} hrs
+                  </span>
+                )}
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                placeholder="0.0"
+                value={extraHours}
+                onChange={(e) => setExtraHours(e.target.value)}
+                className="w-full bg-gray-700 border-2 border-amber-500/80 rounded-lg p-2.5 text-sm text-amber-200 font-black focus:ring-amber-500 focus:border-amber-400 font-mono shadow-inner"
+              />
+            </div>
           </div>
 
           {/* NOTAS DE COBRO */}
@@ -1216,7 +1294,7 @@ export const MachineryControl: React.FC = () => {
               rows={2}
               value={billingNotes}
               onChange={(e) => setBillingNotes(e.target.value)}
-              placeholder="Ej. 2 horas extras trabajadas fuera de horario de obra. Operador descansó 1 hr por falta de trazo del residente. Cobro directo a cliente..."
+              placeholder="Ej. 2 horas extras trabajadas fuera de horario de obra según vale V-1045. Operador descansó 1 hr por falta de trazo..."
               className="w-full bg-gray-700 border border-amber-600/50 rounded-lg p-2.5 text-sm text-white placeholder-gray-400 focus:ring-amber-500 focus:border-amber-500"
             />
           </div>
@@ -1386,7 +1464,7 @@ export const MachineryControl: React.FC = () => {
               <span>📜</span> Historial General de Operación Diaria
             </h4>
             <p className="text-xs text-gray-400">
-              Registros ordenados por fecha más reciente con operador y notas destacadas para cobro.
+              Registros ordenados por fecha más reciente con No. de Vale, operador, desglose de horas extras y notas de cobro.
             </p>
           </div>
 
@@ -1414,21 +1492,23 @@ export const MachineryControl: React.FC = () => {
             <thead className="bg-gray-900/90 text-gray-300 uppercase tracking-wider text-[11px] border-b border-gray-700">
               <tr>
                 <th className="p-3">Fecha</th>
+                <th className="p-3">No. Vale</th>
                 <th className="p-3">Máquina</th>
                 <th className="p-3">Operador</th>
                 <th className="p-3 text-right">Horóm. Inicial</th>
                 <th className="p-3 text-right">Horóm. Final</th>
-                <th className="p-3 text-right text-blue-300">Horas Trab.</th>
+                <th className="p-3 text-right text-blue-300">Horas Totales</th>
+                <th className="p-3 text-right text-amber-300">H. Extras</th>
                 <th className="p-3 text-right text-emerald-300">Combustible</th>
                 <th className="p-3 text-right text-indigo-300">Rendimiento</th>
-                <th className="p-3 min-w-[260px] text-amber-300">Notas de Cobro (Facturación)</th>
+                <th className="p-3 min-w-[240px] text-amber-300">Notas de Cobro (Facturación)</th>
                 <th className="p-3 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700/60 bg-gray-800/60">
               {filteredDailyLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="p-8 text-center text-gray-400 italic">
+                  <td colSpan={12} className="p-8 text-center text-gray-400 italic">
                     No hay registros de operación diaria guardados.
                   </td>
                 </tr>
@@ -1443,6 +1523,16 @@ export const MachineryControl: React.FC = () => {
                     <tr key={log.id} className="hover:bg-gray-700/40 transition-colors">
                       <td className="p-3 font-semibold text-white whitespace-nowrap">
                         {log.date}
+                      </td>
+                      {/* NO. DE VALE */}
+                      <td className="p-3 whitespace-nowrap">
+                        {log.ticketNumber ? (
+                          <span className="bg-slate-700 border border-slate-600 text-cyan-300 font-mono font-bold px-2 py-0.5 rounded text-[11px]">
+                            📄 {log.ticketNumber}
+                          </span>
+                        ) : (
+                          <span className="text-gray-500 font-mono text-[11px]">-</span>
+                        )}
                       </td>
                       <td className="p-3">
                         <span className="font-bold text-white block">{log.machineName}</span>
@@ -1459,8 +1549,19 @@ export const MachineryControl: React.FC = () => {
                       <td className="p-3 text-right text-gray-200 font-bold font-mono">
                         {log.finalHours.toFixed(1)}
                       </td>
+                      {/* HORAS TOTALES */}
                       <td className="p-3 text-right font-black text-blue-400 font-mono">
                         +{log.hoursWorked.toFixed(1)} hrs
+                      </td>
+                      {/* HORAS EXTRAS DESTACADAS */}
+                      <td className="p-3 text-right font-mono">
+                        {log.extraHours > 0 ? (
+                          <span className="bg-amber-950/80 border border-amber-500/80 text-amber-300 font-black px-2 py-0.5 rounded text-xs inline-block">
+                            ⭐ {log.extraHours.toFixed(1)} hrs
+                          </span>
+                        ) : (
+                          <span className="text-gray-500 text-[11px]">-</span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-bold text-emerald-400 font-mono">
                         {log.fuelLiters > 0 ? `${log.fuelLiters.toFixed(1)} L` : '-'}
