@@ -896,10 +896,10 @@ export const MachineryControl: React.FC = () => {
   return (
     <div className="bg-gray-800 p-3 sm:p-5 md:p-6 rounded-xl shadow-xl border border-gray-700 space-y-5 text-white">
       {/* ENCABEZADO Y PESTAÑAS */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-700 pb-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-gray-700 pb-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-white">
+            <h3 className="text-xl sm:text-2xl font-black flex items-center gap-2 text-white">
               <span>🚜</span> Control y Rendimiento de Maquinaria
             </h3>
             <span className="inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 px-2.5 py-0.5 rounded-full font-bold shadow-sm">
@@ -912,62 +912,67 @@ export const MachineryControl: React.FC = () => {
           </p>
         </div>
 
-        {/* SELECTOR DE PESTAÑAS */}
-        <div className="flex items-center overflow-x-auto max-w-full bg-gray-900 p-1 rounded-lg border border-gray-700 gap-1 scrollbar-thin py-1.5 px-1.5">
+        {/* SELECTOR DE PESTAÑAS: Visible completo en todas las pantallas sin barras de desplazamiento que lo oculten */}
+        <div className="flex flex-wrap items-center bg-gray-900 p-1.5 rounded-xl border border-gray-700 gap-1.5 shadow-inner">
           <button
             type="button"
             onClick={() => setActiveTab('daily')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'daily'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-400/50 scale-[1.02]'
+                : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
-            📋 Registro Diario
+            <span>📋</span>
+            <span>Registro Diario</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('maintenance')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'maintenance'
-                ? 'bg-amber-600 text-white shadow'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                ? 'bg-amber-600 text-white shadow-lg ring-2 ring-amber-400/50 scale-[1.02]'
+                : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
-            🔧 Mantenimiento
+            <span>🔧</span>
+            <span>Mantenimiento</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('machines')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'machines'
-                ? 'bg-red-600 text-white shadow'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                ? 'bg-red-600 text-white shadow-lg ring-2 ring-red-400/50 scale-[1.02]'
+                : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
-            <span>🚜</span> Base Máquinas ({machines.length})
+            <span>🚜</span>
+            <span>Base Máquinas ({machines.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('operators')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'operators'
-                ? 'bg-emerald-600 text-white shadow'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                ? 'bg-emerald-600 text-white shadow-lg ring-2 ring-emerald-400/50 scale-[1.02]'
+                : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
-            <span>👷</span> Base Operadores ({operators.length})
+            <span>👷</span>
+            <span>Base Operadores ({operators.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('locations')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'locations'
-                ? 'bg-cyan-600 text-white shadow'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                ? 'bg-cyan-600 text-white shadow-lg ring-2 ring-cyan-400/50 scale-[1.02]'
+                : 'text-gray-300 hover:text-white hover:bg-gray-800'
             }`}
           >
-            <span>📍</span> Base Ubicaciones ({locations.length})
+            <span>📍</span>
+            <span>Base Ubicaciones ({locations.length})</span>
           </button>
         </div>
       </div>
@@ -1565,7 +1570,7 @@ export const MachineryControl: React.FC = () => {
           </div>
 
           {/* BOTONES SELECTORES DE MÁQUINA: ÍCONO Y NÚMERO */}
-          <div className="flex items-center overflow-x-auto max-w-full gap-2 pb-1 sm:pb-0 scrollbar-thin">
+          <div className="flex flex-wrap items-center gap-2">
             {machines.map((mach) => {
               const isSelected = mach.id === dashboardMachineId;
               return (
@@ -1770,12 +1775,13 @@ export const MachineryControl: React.FC = () => {
 
             {/* NO. DE VALE / FOLIO DE CAMPO */}
             <div>
-              <label className="block text-xs font-bold text-gray-300 mb-1 flex items-center gap-1">
-                <span>📄</span> No. de Vale / Folio de Campo
+              <label className="block text-xs font-bold text-gray-300 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">📄 No. de Vale / Folio</span>
+                <span className="text-[10px] text-gray-400 font-normal">Supervisión cliente</span>
               </label>
               <input
                 type="text"
-                placeholder="Ej. V-1045, Folio 892"
+                placeholder="Ej. V-1045, Folio 892 (Firmado)"
                 value={ticketNumber}
                 onChange={(e) => setTicketNumber(e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white font-mono uppercase focus:ring-red-500 focus:border-red-500"
@@ -1858,13 +1864,13 @@ export const MachineryControl: React.FC = () => {
             {/* COMBUSTIBLE CARGADO */}
             <div>
               <label className="block text-xs font-bold text-gray-300 mb-1">
-                Combustible (Litros)
+                ⛽ Combustible Suministrado (Litros)
               </label>
               <input
                 type="number"
                 step="0.1"
                 min="0"
-                placeholder="0.0"
+                placeholder="0.0 L"
                 value={fuelLiters}
                 onChange={(e) => setFuelLiters(e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm text-white focus:ring-red-500 focus:border-red-500 font-mono"
@@ -1874,8 +1880,8 @@ export const MachineryControl: React.FC = () => {
             {/* HORÓMETRO INICIAL (BLOQUEADO) */}
             <div>
               <label className="block text-xs font-bold text-gray-300 mb-1 flex items-center justify-between">
-                <span>Horóm. Inicial</span>
-                <span className="text-[10px] text-amber-400">🔒 Bloqueado</span>
+                <span>⏱️ Horóm. Anterior (Inicial)</span>
+                <span className="text-[10px] text-amber-400 font-bold">🔒 Bloqueado</span>
               </label>
               <input
                 type="number"
