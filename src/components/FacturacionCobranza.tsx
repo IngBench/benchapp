@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import type { Obra } from '../types';
 
 // ============================================================================
 // TIPOS E INTERFACES DEL MÓDULO
@@ -366,9 +367,37 @@ export default function FacturacionCobranza() {
   }, []);
 
   // --------------------------------------------------------------------------
-  // 4. ESTADOS PARA FORMULARIO DE NUEVA FACTURA
+  // 4. ESTADOS PARA FORMULARIO DE NUEVA FACTURA Y ASIGNACIÓN DE OBRA
   // --------------------------------------------------------------------------
   const hoyStr = new Date().toISOString().split('T')[0];
+
+  // Obra / Contrato al que se asignará la nueva factura
+  const [obraDestinoFacturaId, setObraDestinoFacturaId] = useState<string>(() => obraIdSeleccionada);
+
+  useEffect(() => {
+    setObraDestinoFacturaId(obraIdSeleccionada);
+  }, [obraIdSeleccionada]);
+
+  const obraDestinoFactura = useMemo(() => {
+    return obras.find((o) => o.id === obraDestinoFacturaId) || obraSeleccionada;
+  }, [obras, obraDestinoFacturaId, obraSeleccionada]);
+
+  // Modal para dar de alta una nueva obra directamente en Obras y Contratos
+  const [modalNuevaObraOpen, setModalNuevaObraOpen] = useState(false);
+  const [nuevaObraForm, setNuevaObraForm] = useState({
+    nombre: '',
+    cliente: '',
+    contrato: '',
+    montoSubtotal: '',
+    ubicacion: '',
+    residente: '',
+    descripcion: '',
+    fechaInicio: hoyStr,
+    fechaFin: '',
+  });
+  const [cargandoNuevaObra, setCargandoNuevaObra] = useState(false);
+  const [errorNuevaObra, setErrorNuevaObra] = useState<string | null>(null);
+
   const [folio, setFolio] = useState('');
   const [concepto, setConcepto] = useState<ConceptoFactura>('Estimación');
   const [conceptoPersonalizado, setConceptoPersonalizado] = useState('');
@@ -529,6 +558,85 @@ export default function FacturacionCobranza() {
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Dar de alta una nueva obra directamente en Firebase (módulo Obras y Contratos)
+  const handleGuardarNuevaObra = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorNuevaObra(null);
+
+    if (!nuevaObraForm.nombre.trim()) {
+      setErrorNuevaObra('Por favor ingresa el nombre de la obra.');
+      return;
+    }
+    if (!nuevaObraForm.cliente.trim()) {
+      setErrorNuevaObra('Por favor ingresa el nombre del cliente.');
+      return;
+    }
+    if (!nuevaObraForm.contrato.trim()) {
+      setErrorNuevaObra('Por favor especifica el número o folio de contrato.');
+      return;
+    }
+    const montoSub = parseFloat(nuevaObraForm.montoSubtotal);
+    if (isNaN(montoSub) || montoSub <= 0) {
+      setErrorNuevaObra('Por favor ingresa un monto subtotal válido mayor a 0.');
+      return;
+    }
+
+    setCargandoNuevaObra(true);
+    try {
+      const newId = Date.now().toString();
+      const obraData: Obra = {
+        id: newId,
+        nombre: nuevaObraForm.nombre.trim(),
+        cliente: nuevaObraForm.cliente.trim(),
+        contrato: nuevaObraForm.contrato.trim(),
+        descripcion: nuevaObraForm.descripcion.trim(),
+        ubicacion: nuevaObraForm.ubicacion.trim(),
+        residente: nuevaObraForm.residente.trim(),
+        montoSubtotal: montoSub,
+        fechaInicio: nuevaObraForm.fechaInicio || hoyStr,
+        fechaFin: nuevaObraForm.fechaFin || '',
+        estatus: 'Activa',
+        elementos: [],
+        preciosFactura: [],
+        compras: [],
+      };
+
+      // 1. Guardar en Firestore colección 'obras' (se sincroniza con el módulo Obras y Contratos)
+      await setDoc(doc(db, 'obras', newId), obraData);
+
+      // 2. Actualizar lista de obras localmente
+      const updatedObras = [obraData as ObraItem, ...obras];
+      setObras(updatedObras);
+      try {
+        localStorage.setItem(STORAGE_KEYS.OBRAS_PRIMARY, JSON.stringify(updatedObras));
+      } catch {}
+
+      // 3. Asignar de inmediato la nueva obra para esta factura y en el visor del dashboard
+      setObraDestinoFacturaId(newId);
+      setObraIdSeleccionada(newId);
+
+      setModalNuevaObraOpen(false);
+      setNuevaObraForm({
+        nombre: '',
+        cliente: '',
+        contrato: '',
+        montoSubtotal: '',
+        ubicacion: '',
+        residente: '',
+        descripcion: '',
+        fechaInicio: hoyStr,
+        fechaFin: '',
+      });
+      setExitoForm(`¡Obra "${obraData.nombre}" registrada en Obras y Contratos y asignada a esta factura!`);
+      setTimeout(() => setExitoForm(null), 5000);
+    } catch (err: any) {
+      console.error('Error al registrar nueva obra en Firestore:', err);
+      setErrorNuevaObra('No se pudo guardar la obra en la nube. Por favor intenta de nuevo.');
+    } finally {
+      setCargandoNuevaObra(false);
+    }
+  };
+
   // Registrar nueva factura
   const handleRegistrarFactura = (e: React.FormEvent) => {
     e.preventDefault();
@@ -541,12 +649,14 @@ export default function FacturacionCobranza() {
       return;
     }
 
+    const idObraAsignada = obraDestinoFacturaId || obraSeleccionada.id;
+
     // Validar duplicidad de folio en la misma obra
     const folioExiste = invoices.some(
-      (inv) => inv.obraId === obraSeleccionada.id && inv.folio.toUpperCase() === folioLimpio
+      (inv) => inv.obraId === idObraAsignada && inv.folio.toUpperCase() === folioLimpio
     );
     if (folioExiste) {
-      setErrorForm(`El folio "${folioLimpio}" ya fue registrado para esta obra. Por favor verifica.`);
+      setErrorForm(`El folio "${folioLimpio}" ya fue registrado para este contrato. Por favor verifica.`);
       return;
     }
 
@@ -561,7 +671,7 @@ export default function FacturacionCobranza() {
     const nuevaFactura: Invoice = {
       id: `inv-${Date.now()}`,
       folio: folioLimpio,
-      obraId: obraSeleccionada.id,
+      obraId: idObraAsignada,
       concepto: conceptoFinal,
       fechaEmision: fechaEmision || hoyStr,
       monto: montoNum,
@@ -572,6 +682,11 @@ export default function FacturacionCobranza() {
 
     setInvoices((prev) => [nuevaFactura, ...prev]);
     setExitoForm(`Factura ${folioLimpio} guardada exitosamente con estatus "${estatusInicial}".`);
+
+    // Si la obra asignada es diferente a la que estábamos viendo en el dashboard, cambiar la vista a ella
+    if (obraIdSeleccionada !== idObraAsignada) {
+      setObraIdSeleccionada(idObraAsignada);
+    }
 
     // Limpiar formulario
     setFolio('');
@@ -1025,7 +1140,7 @@ export default function FacturacionCobranza() {
                 Registrar Nueva Factura
               </h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Alta de factura para <strong>{obraSeleccionada?.nombre}</strong>
+                Alta de factura para <strong>{obraDestinoFactura?.nombre || obraSeleccionada?.nombre}</strong>
               </p>
             </div>
           </div>
@@ -1046,6 +1161,55 @@ export default function FacturacionCobranza() {
         )}
 
         <form onSubmit={handleRegistrarFactura} className="space-y-4">
+          {/* ASIGNACIÓN DE OBRA / CONTRATO */}
+          <div className="bg-blue-50/70 dark:bg-blue-950/40 p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/60">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-black text-gray-800 dark:text-gray-200 mb-1">
+                  Obra / Contrato al que se Asigna la Factura *
+                </label>
+                <div className="relative">
+                  <select
+                    value={obraDestinoFacturaId}
+                    onChange={(e) => setObraDestinoFacturaId(e.target.value)}
+                    className="w-full p-2.5 pr-8 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer"
+                  >
+                    {obras.map((o) => {
+                      const neto = (Number(o.montoSubtotal) || 0) * 1.16;
+                      return (
+                        <option key={o.id} value={o.id}>
+                          {o.nombre} — {o.cliente ? `${o.cliente} | ` : ''}Contrato: {o.contrato || 'S/N'} (Neto: {formatPesos(neto)})
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-xs">
+                    ▼
+                  </span>
+                </div>
+              </div>
+
+              <div className="sm:self-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorNuevaObra(null);
+                    setModalNuevaObraOpen(true);
+                  }}
+                  className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition-colors shadow-sm flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                  title="Dar de alta una nueva obra o contrato que se guardará en Obras y Contratos"
+                >
+                  <span>➕</span>
+                  <span>Nueva Obra / Contrato</span>
+                </button>
+              </div>
+            </div>
+            
+            <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-2 font-medium">
+              💡 Si el contrato deseado no aparece en la lista, da clic en <strong>"Nueva Obra / Contrato"</strong> para crearlo de inmediato; se guardará automáticamente en el módulo de <strong>Obras y Contratos</strong>.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* FOLIO */}
             <div>
@@ -1411,6 +1575,204 @@ export default function FacturacionCobranza() {
           </div>
         )}
       </div>
+
+      {/* ======================================================== */}
+      {/* MODAL: CREAR NUEVA OBRA / CONTRATO (SINCRONIZADO CON OBRAS) */}
+      {/* ======================================================== */}
+      {modalNuevaObraOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
+            
+            {/* Cabecera del Modal */}
+            <div className="p-4 sm:p-5 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-lg">
+                  🏗️
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-900 dark:text-white leading-tight">
+                    Dar de Alta Nueva Obra / Contrato
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Se guardará en la base de datos de <strong>Obras y Contratos</strong> en Firebase
+                  </p>
+                </div>
+              </div>
+              
+              <button
+                type="button"
+                onClick={() => setModalNuevaObraOpen(false)}
+                className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                aria-label="Cerrar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Formulario de Alta de Obra */}
+            <form onSubmit={handleGuardarNuevaObra} className="p-5 sm:p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {errorNuevaObra && (
+                <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 p-3 rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2">
+                  <span className="shrink-0 text-base">⚠️</span>
+                  <span>{errorNuevaObra}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* NOMBRE DE LA OBRA */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Nombre de la Obra o Proyecto *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. Torre Alborada - Herrería Estructural"
+                    value={nuevaObraForm.nombre}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, nombre: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+
+                {/* CLIENTE */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Cliente / Desarrollador *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. GSC Constructora"
+                    value={nuevaObraForm.cliente}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, cliente: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+
+                {/* NO. DE CONTRATO */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    No. de Contrato / Folio *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. CONT-5560, ALB-2026"
+                    value={nuevaObraForm.contrato}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, contrato: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+
+                {/* MONTO SUBTOTAL */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Monto Contrato Subtotal (Sin IVA) *
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      min="0.01"
+                      placeholder="0.00"
+                      value={nuevaObraForm.montoSubtotal}
+                      onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, montoSubtotal: e.target.value })}
+                      className="w-full p-2.5 pl-7 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-black focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                    />
+                  </div>
+                  
+                  {/* CÁLCULO EN VIVO DE IVA Y MONTO NETO */}
+                  {Number(nuevaObraForm.montoSubtotal) > 0 && (
+                    <div className="mt-2 p-2.5 bg-blue-50 dark:bg-blue-950/50 rounded-lg border border-blue-200 dark:border-blue-900/60 text-xs flex flex-wrap justify-between items-center text-blue-900 dark:text-blue-200 font-bold">
+                      <span>+ 16% IVA: {formatPesos(Number(nuevaObraForm.montoSubtotal) * 0.16)}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                        MONTO CONTRATO NETO: {formatPesos(Number(nuevaObraForm.montoSubtotal) * 1.16)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* UBICACIÓN */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Ubicación / Municipio
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Tesistán, Zapopan"
+                    value={nuevaObraForm.ubicacion}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, ubicacion: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+
+                {/* RESIDENTE */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Residente / Encargado
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Ing. Filiberto Procel"
+                    value={nuevaObraForm.residente}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, residente: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+
+                {/* DESCRIPCIÓN */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Descripción / Alcance de Trabajos (Opcional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Detalle o notas contractuales..."
+                    value={nuevaObraForm.descripcion}
+                    onChange={(e) => setNuevaObraForm({ ...nuevaObraForm, descripcion: e.target.value })}
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* ACCIONES DEL MODAL */}
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setModalNuevaObraOpen(false)}
+                  disabled={cargandoNuevaObra}
+                  className="px-4 py-2 text-xs font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={cargandoNuevaObra}
+                  className={`bg-blue-600 hover:bg-blue-700 text-white font-black px-5 py-2 rounded-xl text-xs transition-colors shadow-md cursor-pointer flex items-center gap-2 ${
+                    cargandoNuevaObra ? 'opacity-70 cursor-wait' : ''
+                  }`}
+                >
+                  {cargandoNuevaObra ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Guardando en Firebase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>💾</span>
+                      <span>Guardar Obra y Asignar</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
