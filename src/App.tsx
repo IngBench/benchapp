@@ -12,6 +12,7 @@ import Presupuestos from './components/Presupuestos';
 import CatalogoMateriales from './components/CatalogoMateriales';
 import ControlUsuarios from './components/ControlUsuarios';
 import MachineryControl from './components/MachineryControl';
+import Reportes from './components/Reportes';
 import { PERMISOS_ADMIN, type UsuarioERP, type ModuloApp } from './types';
 
 export default function App() {
@@ -88,6 +89,7 @@ export default function App() {
     { id: 'catalogo', label: 'Modelos de Herrería', icon: '📐' },
     { id: 'materiales', label: 'Catálogo de Materiales', icon: '🔩' },
     { id: 'maquinaria', label: 'Control de Maquinaria', icon: '🚜' },
+    { id: 'reportes', label: 'Reportes y Analítica', icon: '📊' },
     { id: 'usuarios', label: 'Control de Usuarios', icon: '👥' },
   ];
 
@@ -298,6 +300,7 @@ export default function App() {
           {activeView === 'presupuestos' && <Presupuestos />}
           {activeView === 'materiales' && <CatalogoMateriales />}
           {activeView === 'maquinaria' && <MachineryControl />}
+          {activeView === 'reportes' && <Reportes />}
           {activeView === 'usuarios' && <ControlUsuarios usuarioActualId={usuarioActivo.uid} />}
         </div>
       </main>
