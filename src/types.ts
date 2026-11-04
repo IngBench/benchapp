@@ -97,6 +97,7 @@ export interface Presupuesto {
 export type ModuloApp = 
     | 'obras' 
     | 'presupuestos' 
+    | 'facturacion'
     | 'almacen' 
     | 'fabricacion' 
     | 'catalogo' 
@@ -108,6 +109,7 @@ export type ModuloApp =
 export interface PermisosUsuario {
     obras: boolean;
     presupuestos: boolean;
+    facturacion?: boolean;
     almacen: boolean;
     fabricacion: boolean;
     catalogo: boolean;
@@ -133,6 +135,7 @@ export interface UsuarioERP {
 export const LISTA_MODULOS: { id: ModuloApp; nombre: string; icono: string; descripcion: string }[] = [
     { id: 'obras', nombre: 'Obras y Contratos', icono: '🏗️', descripcion: 'Gestión de obras, clientes, contratos y avance' },
     { id: 'presupuestos', nombre: 'Presupuestos (Cotizador)', icono: '📝', descripcion: 'Cotizaciones, precios por kg y reportes' },
+    { id: 'facturacion', nombre: 'Facturación y Cobranza', icono: '💼', descripcion: 'Emisión de facturas, cobranza por obra y conciliación de maquinaria' },
     { id: 'almacen', nombre: 'Almacén y Compras', icono: '📦', descripcion: 'Inventario, registro de facturas y tramos' },
     { id: 'fabricacion', nombre: 'Taller y Destajos', icono: '👨‍🏭', descripcion: 'Control de destajos, taller y nómina' },
     { id: 'catalogo', nombre: 'Modelos de Herrería', icono: '📐', descripcion: 'Catálogo de modelos estructurales e insumos' },
@@ -145,6 +148,7 @@ export const LISTA_MODULOS: { id: ModuloApp; nombre: string; icono: string; desc
 export const PERMISOS_DEFAULT: PermisosUsuario = {
     obras: false,
     presupuestos: false,
+    facturacion: false,
     almacen: false,
     fabricacion: false,
     catalogo: false,
@@ -157,6 +161,7 @@ export const PERMISOS_DEFAULT: PermisosUsuario = {
 export const PERMISOS_ADMIN: PermisosUsuario = {
     obras: true,
     presupuestos: true,
+    facturacion: true,
     almacen: true,
     fabricacion: true,
     catalogo: true,

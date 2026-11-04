@@ -20,6 +20,7 @@ import CatalogoMateriales from './components/CatalogoMateriales';
 import ControlUsuarios from './components/ControlUsuarios';
 import MachineryControl from './components/MachineryControl';
 import Reportes from './components/Reportes';
+import FacturacionCobranza from './components/FacturacionCobranza';
 import { PERMISOS_ADMIN, type UsuarioERP, type ModuloApp } from './types';
 
 export default function App() {
@@ -192,6 +193,7 @@ export default function App() {
   const menuCompleto: { id: ModuloApp; label: string; icon: string }[] = [
     { id: 'obras', label: 'Obras y Contratos', icon: '🏗️' },
     { id: 'presupuestos', label: 'Presupuestos (Cotizador)', icon: '📝' },
+    { id: 'facturacion', label: 'Facturación y Cobranza', icon: '💼' },
     { id: 'almacen', label: 'Almacén y Compras', icon: '📦' },
     { id: 'fabricacion', label: 'Taller y Destajos', icon: '👨‍🏭' },
     { id: 'catalogo', label: 'Modelos de Herrería', icon: '📐' },
@@ -446,6 +448,8 @@ export default function App() {
       <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-3 sm:p-5 md:p-8 print:p-0 print:overflow-visible print:block print:h-auto print:max-h-none transition-colors">
         <div className="max-w-7xl mx-auto w-full">
           {activeView === 'obras' && <Obras />}
+          {activeView === 'presupuestos' && <Presupuestos />}
+          {activeView === 'facturacion' && <FacturacionCobranza />}
           {activeView === 'almacen' && <Inventario />}
           {activeView === 'catalogo' && <ModelosHerreria />}
           {activeView === 'fabricacion' && <DestajosTaller />}
