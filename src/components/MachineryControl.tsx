@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 export interface Machine {
   id: string;
@@ -80,36 +82,77 @@ const DEFAULT_LOCATIONS: MachineryLocation[] = [
   },
 ];
 
-const DEFAULT_MACHINES: Machine[] = [
+// Las 7 máquinas registradas en campo (extraídas de la captura del colaborador)
+const INITIAL_SEEDED_MACHINES: Machine[] = [
   {
-    id: 'retro-426f2',
+    id: 'mach-1',
     numero: 1,
-    name: 'Retro 426F2',
-    marca: 'Caterpillar',
+    name: 'CAT0426FTEJ401929',
+    marca: 'CATERPILLAR',
     modelo: '426F2',
     anio: 2021,
     type: 'Retroexcavadora',
     currentHours: 1250.0,
   },
   {
-    id: 'manipulador-dl1155',
+    id: 'mach-2',
     numero: 2,
     name: 'Manipulador DL1155',
-    marca: 'Develon',
+    marca: 'DEVELON',
     modelo: 'DL1155',
     anio: 2020,
     type: 'Telehandler',
     currentHours: 840.0,
   },
   {
-    id: 'minicargador',
+    id: 'mach-3',
     numero: 3,
-    name: 'Minicargador S590',
-    marca: 'Bobcat',
-    modelo: 'S590',
-    anio: 2022,
-    type: 'Minicargador (Bobcat)',
-    currentHours: 450.0,
+    name: 'CAT0426FEEJ404813',
+    marca: 'CATERPILLAR',
+    modelo: '426F2',
+    anio: 2021,
+    type: 'RETROEXCAVADORA',
+    currentHours: 6008.0,
+  },
+  {
+    id: 'mach-4',
+    numero: 4,
+    name: 'CAT0426FEEJ406142',
+    marca: 'CATERPILLAR',
+    modelo: '426F2',
+    anio: 2021,
+    type: 'Retroexcavadora',
+    currentHours: 6167.6,
+  },
+  {
+    id: 'mach-5',
+    numero: 5,
+    name: 'CAT0246DPTM700477',
+    marca: 'CATERPILLAR',
+    modelo: '246D3',
+    anio: 2023,
+    type: 'BOBCAT',
+    currentHours: 2192.4,
+  },
+  {
+    id: 'mach-6',
+    numero: 6,
+    name: 'DL1155JG41749',
+    marca: 'MANITOU',
+    modelo: 'GEHL DL1155',
+    anio: 2015,
+    type: 'MANIPULADOR',
+    currentHours: 4688.5,
+  },
+  {
+    id: 'mach-7',
+    numero: 7,
+    name: 'CAT00426HJZ402650',
+    marca: 'CATERPILLAR',
+    modelo: '426',
+    anio: 2024,
+    type: 'Retroexcavadora',
+    currentHours: 2247.2,
   },
 ];
 
@@ -147,47 +190,19 @@ const STORAGE_KEYS = {
 
 export const MachineryControl: React.FC = () => {
   // ============================================================================
-  // 1. ESTADO DE MÁQUINAS (LOCALSTORAGE CON MIGRACIÓN Y CONTROL DE NÚMERO ÚNICO)
+  // ESTADOS CONECTADOS A FIREBASE FIRESTORE EN TIEMPO REAL
   // ============================================================================
   const [machines, setMachines] = useState<Machine[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.MACHINES);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const usedNums = new Set<number>();
-          return parsed.map((m: any, idx: number) => {
-            let num = parseInt(m.numero, 10);
-            if (!num || num <= 0 || usedNums.has(num)) {
-              num = idx + 1;
-              while (usedNums.has(num)) {
-                num++;
-              }
-            }
-            usedNums.add(num);
-
-            return {
-              id: m.id || `mach-${Date.now()}-${idx}`,
-              numero: num,
-              name: m.name || `${m.marca || ''} ${m.modelo || ''}`.trim() || `Máquina ${num}`,
-              marca: m.marca || (m.name?.includes('Retro') ? 'Caterpillar' : m.name?.includes('Manipulador') ? 'Develon' : 'Bobcat'),
-              modelo: m.modelo || (m.name?.includes('426F2') ? '426F2' : m.name?.includes('DL1155') ? 'DL1155' : 'S590'),
-              anio: Number(m.anio || m.año) || 2021,
-              type: m.type || 'Maquinaria Pesada',
-              currentHours: Number(m.currentHours) || 0,
-            };
-          }).sort((a, b) => a.numero - b.numero);
-        }
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (e) {
-      console.error('Error cargando máquinas:', e);
-    }
-    return DEFAULT_MACHINES;
+    } catch {}
+    return INITIAL_SEEDED_MACHINES;
   });
 
-  // ============================================================================
-  // 2. ESTADO DE OPERADORES (LOCALSTORAGE)
-  // ============================================================================
   const [operators, setOperators] = useState<Operator[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.OPERATORS);
@@ -195,15 +210,10 @@ export const MachineryControl: React.FC = () => {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (e) {
-      console.error('Error cargando operadores:', e);
-    }
+    } catch {}
     return DEFAULT_OPERATORS;
   });
 
-  // ============================================================================
-  // 3. ESTADO DE UBICACIONES / OBRAS (LOCALSTORAGE)
-  // ============================================================================
   const [locations, setLocations] = useState<MachineryLocation[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LOCATIONS);
@@ -211,85 +221,146 @@ export const MachineryControl: React.FC = () => {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (e) {
-      console.error('Error cargando ubicaciones:', e);
-    }
+    } catch {}
     return DEFAULT_LOCATIONS;
   });
 
-  // ============================================================================
-  // 4. REGISTROS DIARIOS Y MANTENIMIENTOS
-  // ============================================================================
-  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.DAILY_LOGS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.map((log: any) => ({
-            ...log,
-            ticketNumber: log.ticketNumber || '',
-            locationId: log.locationId || '',
-            locationName: log.locationName || log.ubicacion || 'Parques del Palmar',
-            extraHours: Number(log.extraHours) || 0,
-          }));
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
+  const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
+  const [cloudSynced, setCloudSynced] = useState<boolean>(false);
+
+  // Escuchar colecciones de Firestore en tiempo real y auto-sembrar si está vacío
+  useEffect(() => {
+    // 1. MÁQUINAS (maquinaria_equipos)
+    const unsubMachines = onSnapshot(collection(db, 'maquinaria_equipos'), async (snapshot) => {
+      if (snapshot.empty) {
+        // Inicializar Firestore con las 7 máquinas
+        for (const m of INITIAL_SEEDED_MACHINES) {
+          try {
+            await setDoc(doc(db, 'maquinaria_equipos', m.id), m);
+          } catch (e) {
+            console.error('Error sembrando máquina en Firestore:', e);
+          }
+        }
+      } else {
+        const cloudList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Machine));
+        cloudList.sort((a, b) => a.numero - b.numero);
+        setMachines(cloudList);
+        localStorage.setItem(STORAGE_KEYS.MACHINES, JSON.stringify(cloudList));
+        setCloudSynced(true);
+
+        // Migración automática de máquinas locales que no estén en la nube
+        try {
+          const saved = localStorage.getItem(STORAGE_KEYS.MACHINES);
+          if (saved) {
+            const localList: Machine[] = JSON.parse(saved);
+            if (Array.isArray(localList)) {
+              for (const lm of localList) {
+                if (lm.numero && !cloudList.some(cm => cm.numero === lm.numero || cm.id === lm.id)) {
+                  const newId = lm.id || `mach-${lm.numero}-${Date.now()}`;
+                  await setDoc(doc(db, 'maquinaria_equipos', newId), { ...lm, id: newId });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Error en migración local de máquinas:', e);
         }
       }
-    } catch (e) {
-      console.error('Error cargando registros diarios:', e);
-    }
-    return [];
-  });
+    }, (error) => {
+      console.error('Error escuchando maquinaria_equipos en Firestore:', error);
+    });
 
-  const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MAINTENANCE_LOGS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Error cargando mantenimientos:', e);
-    }
-    return [];
-  });
+    // 2. OPERADORES (maquinaria_operadores)
+    const unsubOperators = onSnapshot(collection(db, 'maquinaria_operadores'), async (snapshot) => {
+      if (snapshot.empty) {
+        for (const op of DEFAULT_OPERATORS) {
+          try {
+            await setDoc(doc(db, 'maquinaria_operadores', op.id), op);
+          } catch (e) {
+            console.error('Error sembrando operador:', e);
+          }
+        }
+      } else {
+        const cloudOps = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Operator));
+        setOperators(cloudOps);
+        localStorage.setItem(STORAGE_KEYS.OPERATORS, JSON.stringify(cloudOps));
+      }
+    }, (error) => {
+      console.error('Error escuchando maquinaria_operadores en Firestore:', error);
+    });
 
-  // Persistir en LocalStorage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MACHINES, JSON.stringify(machines));
-  }, [machines]);
+    // 3. UBICACIONES (maquinaria_ubicaciones)
+    const unsubLocations = onSnapshot(collection(db, 'maquinaria_ubicaciones'), async (snapshot) => {
+      if (snapshot.empty) {
+        for (const loc of DEFAULT_LOCATIONS) {
+          try {
+            await setDoc(doc(db, 'maquinaria_ubicaciones', loc.id), loc);
+          } catch (e) {
+            console.error('Error sembrando ubicación:', e);
+          }
+        }
+      } else {
+        const cloudLocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MachineryLocation));
+        setLocations(cloudLocs);
+        localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(cloudLocs));
+      }
+    }, (error) => {
+      console.error('Error escuchando maquinaria_ubicaciones en Firestore:', error);
+    });
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.OPERATORS, JSON.stringify(operators));
-  }, [operators]);
+    // 4. REGISTROS DIARIOS (maquinaria_registros)
+    const unsubDaily = onSnapshot(collection(db, 'maquinaria_registros'), (snapshot) => {
+      const cloudDaily = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DailyLog));
+      setDailyLogs(cloudDaily);
+      localStorage.setItem(STORAGE_KEYS.DAILY_LOGS, JSON.stringify(cloudDaily));
+    }, (error) => {
+      console.error('Error escuchando maquinaria_registros en Firestore:', error);
+    });
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(locations));
-  }, [locations]);
+    // 5. MANTENIMIENTOS (maquinaria_mantenimientos)
+    const unsubMaint = onSnapshot(collection(db, 'maquinaria_mantenimientos'), (snapshot) => {
+      const cloudMaint = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MaintenanceLog));
+      setMaintenanceLogs(cloudMaint);
+      localStorage.setItem(STORAGE_KEYS.MAINTENANCE_LOGS, JSON.stringify(cloudMaint));
+    }, (error) => {
+      console.error('Error escuchando maquinaria_mantenimientos en Firestore:', error);
+    });
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DAILY_LOGS, JSON.stringify(dailyLogs));
-  }, [dailyLogs]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MAINTENANCE_LOGS, JSON.stringify(maintenanceLogs));
-  }, [maintenanceLogs]);
+    return () => {
+      unsubMachines();
+      unsubOperators();
+      unsubLocations();
+      unsubDaily();
+      unsubMaint();
+    };
+  }, []);
 
   // Pestaña activa del módulo
   const [activeTab, setActiveTab] = useState<'daily' | 'maintenance' | 'machines' | 'operators' | 'locations'>('daily');
 
   // Máquina seleccionada para el Dashboard
-  const [dashboardMachineId, setDashboardMachineId] = useState<string>(
-    machines[0]?.id || 'retro-426f2'
-  );
+  const [dashboardMachineId, setDashboardMachineId] = useState<string>('mach-1');
 
   // Filtro para el historial
   const [filterMachineId, setFilterMachineId] = useState<string>('all');
+
+  // Sincronizar máquina dashboard cuando cargan las máquinas
+  useEffect(() => {
+    if (machines.length > 0) {
+      if (!dashboardMachineId || !machines.some(m => m.id === dashboardMachineId)) {
+        setDashboardMachineId(machines[0].id);
+      }
+    }
+  }, [machines, dashboardMachineId]);
 
   // ============================================================================
   // FORMULARIO: REGISTRO DIARIO
   // ============================================================================
   const todayStr = new Date().toISOString().split('T')[0];
-  const [dailyMachineId, setDailyMachineId] = useState<string>(machines[0]?.id || '');
-  const [dailyOperatorId, setDailyOperatorId] = useState<string>(operators[0]?.id || '');
-  const [dailyLocationId, setDailyLocationId] = useState<string>(locations[0]?.id || '');
+  const [dailyMachineId, setDailyMachineId] = useState<string>('mach-1');
+  const [dailyOperatorId, setDailyOperatorId] = useState<string>('op-1');
+  const [dailyLocationId, setDailyLocationId] = useState<string>('loc-1');
   const [dailyDate, setDailyDate] = useState<string>(todayStr);
   const [ticketNumber, setTicketNumber] = useState<string>(''); // No. de Vale / Folio
   const [fuelLiters, setFuelLiters] = useState<string>('');
@@ -298,6 +369,25 @@ export const MachineryControl: React.FC = () => {
   const [billingNotes, setBillingNotes] = useState<string>('');
   const [dailyError, setDailyError] = useState<string | null>(null);
   const [dailySuccess, setDailySuccess] = useState<string | null>(null);
+
+  // Alinear selecciones activas si se actualizan los catálogos en la nube
+  useEffect(() => {
+    if (machines.length > 0 && (!dailyMachineId || !machines.some(m => m.id === dailyMachineId))) {
+      setDailyMachineId(machines[0].id);
+    }
+  }, [machines, dailyMachineId]);
+
+  useEffect(() => {
+    if (operators.length > 0 && (!dailyOperatorId || !operators.some(op => op.id === dailyOperatorId))) {
+      setDailyOperatorId(operators[0].id);
+    }
+  }, [operators, dailyOperatorId]);
+
+  useEffect(() => {
+    if (locations.length > 0 && (!dailyLocationId || !locations.some(l => l.id === dailyLocationId))) {
+      setDailyLocationId(locations[0].id);
+    }
+  }, [locations, dailyLocationId]);
 
   // Máquina, operador y ubicación activos
   const activeDailyMachine = machines.find((m) => m.id === dailyMachineId) || machines[0];
@@ -312,7 +402,7 @@ export const MachineryControl: React.FC = () => {
       ? parsedFinalHours - initialHours
       : null;
 
-  const handleSaveDailyLog = (e: React.FormEvent) => {
+  const handleSaveDailyLog = async (e: React.FormEvent) => {
     e.preventDefault();
     setDailyError(null);
     setDailySuccess(null);
@@ -347,9 +437,10 @@ export const MachineryControl: React.FC = () => {
     }
 
     const hoursWorked = parsedFinalHours - initialHours;
+    const newLogId = 'log-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
 
     const newLog: DailyLog = {
-      id: 'log-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+      id: newLogId,
       date: dailyDate,
       locationId: activeDailyLocation?.id || '',
       locationName: activeDailyLocation ? activeDailyLocation.name : 'Ubicación General',
@@ -367,30 +458,34 @@ export const MachineryControl: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
 
-    setDailyLogs((prev) => [newLog, ...prev]);
+    try {
+      // 1. Guardar registro diario en Firestore
+      await setDoc(doc(db, 'maquinaria_registros', newLogId), newLog);
 
-    // Actualizar el horómetro actual de la máquina
-    setMachines((prev) =>
-      prev
-        .map((m) => (m.id === activeDailyMachine.id ? { ...m, currentHours: parsedFinalHours } : m))
-        .sort((a, b) => a.numero - b.numero)
-    );
+      // 2. Actualizar el horómetro de la máquina en Firestore
+      await updateDoc(doc(db, 'maquinaria_equipos', activeDailyMachine.id), {
+        currentHours: parsedFinalHours,
+      });
 
-    setTicketNumber('');
-    setFuelLiters('');
-    setFinalHours('');
-    setExtraHours('');
-    setBillingNotes('');
-    setDailySuccess(
-      `Registro guardado. Máquina ${activeDailyMachine.numero} (${activeDailyMachine.marca} ${activeDailyMachine.modelo}): Horómetro final ${parsedFinalHours.toFixed(1)} hrs (${hoursWorked.toFixed(1)} hrs trab.${extras > 0 ? `, ${extras.toFixed(1)} hrs extra` : ''}).`
-    );
-    setTimeout(() => setDailySuccess(null), 5000);
+      setTicketNumber('');
+      setFuelLiters('');
+      setFinalHours('');
+      setExtraHours('');
+      setBillingNotes('');
+      setDailySuccess(
+        `Registro guardado y sincronizado en la nube. Máquina ${activeDailyMachine.numero} (${activeDailyMachine.marca} ${activeDailyMachine.modelo}): Horómetro final ${parsedFinalHours.toFixed(1)} hrs (${hoursWorked.toFixed(1)} hrs trab.${extras > 0 ? `, ${extras.toFixed(1)} hrs extra` : ''}).`
+      );
+      setTimeout(() => setDailySuccess(null), 5000);
+    } catch (err) {
+      console.error('Error al guardar registro en Firestore:', err);
+      setDailyError('Ocurrió un error al guardar el registro en la nube.');
+    }
   };
 
   // ============================================================================
   // FORMULARIO: REGISTRO DE MANTENIMIENTO
   // ============================================================================
-  const [maintMachineId, setMaintMachineId] = useState<string>(machines[0]?.id || '');
+  const [maintMachineId, setMaintMachineId] = useState<string>('mach-1');
   const [maintDate, setMaintDate] = useState<string>(todayStr);
   const activeMaintMachine = machines.find((m) => m.id === maintMachineId) || machines[0];
   const [maintHours, setMaintHours] = useState<string>(
@@ -406,7 +501,7 @@ export const MachineryControl: React.FC = () => {
     if (mach) setMaintHours(mach.currentHours.toString());
   };
 
-  const handleSaveMaintenance = (e: React.FormEvent) => {
+  const handleSaveMaintenance = async (e: React.FormEvent) => {
     e.preventDefault();
     setMaintError(null);
     setMaintSuccess(null);
@@ -427,8 +522,9 @@ export const MachineryControl: React.FC = () => {
       return;
     }
 
+    const newMaintId = 'maint-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
     const newMaint: MaintenanceLog = {
-      id: 'maint-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+      id: newMaintId,
       date: maintDate,
       machineId: activeMaintMachine.id,
       machineName: `Máquina ${activeMaintMachine.numero} - ${activeMaintMachine.marca} ${activeMaintMachine.modelo}`,
@@ -437,10 +533,15 @@ export const MachineryControl: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
 
-    setMaintenanceLogs((prev) => [newMaint, ...prev]);
-    setMaintDescription('');
-    setMaintSuccess(`Servicio registrado para Máquina ${activeMaintMachine.numero} (${activeMaintMachine.marca} ${activeMaintMachine.modelo}).`);
-    setTimeout(() => setMaintSuccess(null), 5000);
+    try {
+      await setDoc(doc(db, 'maquinaria_mantenimientos', newMaintId), newMaint);
+      setMaintDescription('');
+      setMaintSuccess(`Servicio registrado en la nube para Máquina ${activeMaintMachine.numero} (${activeMaintMachine.marca} ${activeMaintMachine.modelo}).`);
+      setTimeout(() => setMaintSuccess(null), 5000);
+    } catch (err) {
+      console.error('Error al guardar mantenimiento en Firestore:', err);
+      setMaintError('No se pudo guardar el servicio en la nube.');
+    }
   };
 
   // ============================================================================
@@ -500,7 +601,7 @@ export const MachineryControl: React.FC = () => {
     setIsAddingMachine(true);
   };
 
-  const handleSaveMachine = (e: React.FormEvent) => {
+  const handleSaveMachine = async (e: React.FormEvent) => {
     e.preventDefault();
     setMachineError(null);
 
@@ -525,54 +626,44 @@ export const MachineryControl: React.FC = () => {
     }
 
     const displayName = machineForm.name.trim() || `${machineForm.marca} ${machineForm.modelo}`;
+    const targetId = editingMachineId || `mach-${num}-${Date.now()}`;
 
-    if (editingMachineId) {
-      setMachines((prev) =>
-        prev
-          .map((m) =>
-            m.id === editingMachineId
-              ? {
-                  ...m,
-                  numero: num,
-                  name: displayName,
-                  marca: machineForm.marca.trim(),
-                  modelo: machineForm.modelo.trim(),
-                  anio: Number(machineForm.anio) || new Date().getFullYear(),
-                  type: machineForm.type.trim() || 'Maquinaria Pesada',
-                  currentHours: Number(machineForm.currentHours) || 0,
-                }
-              : m
-          )
-          .sort((a, b) => a.numero - b.numero)
-      );
-    } else {
-      const newMach: Machine = {
-        id: 'mach-' + Date.now(),
-        numero: num,
-        name: displayName,
-        marca: machineForm.marca.trim(),
-        modelo: machineForm.modelo.trim(),
-        anio: Number(machineForm.anio) || new Date().getFullYear(),
-        type: machineForm.type.trim() || 'Maquinaria Pesada',
-        currentHours: Number(machineForm.currentHours) || 0,
-      };
-      setMachines((prev) => [...prev, newMach].sort((a, b) => a.numero - b.numero));
+    const machData: Machine = {
+      id: targetId,
+      numero: num,
+      name: displayName,
+      marca: machineForm.marca.trim(),
+      modelo: machineForm.modelo.trim(),
+      anio: Number(machineForm.anio) || new Date().getFullYear(),
+      type: machineForm.type.trim() || 'Maquinaria Pesada',
+      currentHours: Number(machineForm.currentHours) || 0,
+    };
+
+    try {
+      await setDoc(doc(db, 'maquinaria_equipos', targetId), machData);
+      setIsAddingMachine(false);
+      setEditingMachineId(null);
+    } catch (err) {
+      console.error('Error al guardar máquina en Firestore:', err);
+      setMachineError('No se pudo guardar la máquina en la nube.');
     }
-
-    setIsAddingMachine(false);
-    setEditingMachineId(null);
   };
 
-  const handleDeleteMachine = (id: string, label: string) => {
+  const handleDeleteMachine = async (id: string, label: string) => {
     if (machines.length <= 1) {
       alert('Debe existir al menos una máquina en el catálogo.');
       return;
     }
-    if (window.confirm(`¿Estás seguro de eliminar ${label} del catálogo?`)) {
-      setMachines((prev) => prev.filter((m) => m.id !== id).sort((a, b) => a.numero - b.numero));
-      if (dashboardMachineId === id) {
-        const remaining = machines.filter((m) => m.id !== id);
-        setDashboardMachineId(remaining[0]?.id || '');
+    if (window.confirm(`¿Estás seguro de eliminar ${label} del catálogo? Se borrará de la nube para todos los usuarios.`)) {
+      try {
+        await deleteDoc(doc(db, 'maquinaria_equipos', id));
+        if (dashboardMachineId === id) {
+          const remaining = machines.filter((m) => m.id !== id);
+          setDashboardMachineId(remaining[0]?.id || '');
+        }
+      } catch (err) {
+        console.error('Error al eliminar máquina en Firestore:', err);
+        alert('No se pudo eliminar la máquina de la nube.');
       }
     }
   };
@@ -611,45 +702,40 @@ export const MachineryControl: React.FC = () => {
     setIsAddingOperator(true);
   };
 
-  const handleSaveOperator = (e: React.FormEvent) => {
+  const handleSaveOperator = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!operatorForm.name.trim() || !operatorForm.nss.trim()) {
       alert('Por favor ingresa el nombre y el NSS del operador.');
       return;
     }
 
-    if (editingOperatorId) {
-      setOperators((prev) =>
-        prev.map((op) =>
-          op.id === editingOperatorId
-            ? {
-                ...op,
-                name: operatorForm.name.trim(),
-                age: Number(operatorForm.age) || 18,
-                nss: operatorForm.nss.trim(),
-                phone: operatorForm.phone.trim(),
-              }
-            : op
-        )
-      );
-    } else {
-      const newOp: Operator = {
-        id: 'op-' + Date.now(),
-        name: operatorForm.name.trim(),
-        age: Number(operatorForm.age) || 18,
-        nss: operatorForm.nss.trim(),
-        phone: operatorForm.phone.trim(),
-      };
-      setOperators((prev) => [...prev, newOp]);
-    }
+    const targetId = editingOperatorId || `op-${Date.now()}`;
+    const opData: Operator = {
+      id: targetId,
+      name: operatorForm.name.trim(),
+      age: Number(operatorForm.age) || 18,
+      nss: operatorForm.nss.trim(),
+      phone: operatorForm.phone.trim(),
+    };
 
-    setIsAddingOperator(false);
-    setEditingOperatorId(null);
+    try {
+      await setDoc(doc(db, 'maquinaria_operadores', targetId), opData);
+      setIsAddingOperator(false);
+      setEditingOperatorId(null);
+    } catch (err) {
+      console.error('Error al guardar operador en Firestore:', err);
+      alert('No se pudo guardar el operador en la nube.');
+    }
   };
 
-  const handleDeleteOperator = (id: string, name: string) => {
-    if (window.confirm(`¿Estás seguro de eliminar al operador "${name}"?`)) {
-      setOperators((prev) => prev.filter((op) => op.id !== id));
+  const handleDeleteOperator = async (id: string, name: string) => {
+    if (window.confirm(`¿Estás seguro de eliminar al operador "${name}"? Se borrará de la nube.`)) {
+      try {
+        await deleteDoc(doc(db, 'maquinaria_operadores', id));
+      } catch (err) {
+        console.error('Error al eliminar operador en Firestore:', err);
+        alert('No se pudo eliminar el operador.');
+      }
     }
   };
 
@@ -690,7 +776,7 @@ export const MachineryControl: React.FC = () => {
     setIsAddingLocation(true);
   };
 
-  const handleSaveLocation = (e: React.FormEvent) => {
+  const handleSaveLocation = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocationError(null);
 
@@ -708,61 +794,66 @@ export const MachineryControl: React.FC = () => {
       return;
     }
 
-    if (editingLocationId) {
-      setLocations((prev) =>
-        prev.map((l) =>
-          l.id === editingLocationId
-            ? {
-                ...l,
-                name: trimmedName,
-                client: locationForm.client.trim(),
-                city: locationForm.city.trim(),
-                notes: locationForm.notes.trim(),
-              }
-            : l
-        )
-      );
-    } else {
-      const newLoc: MachineryLocation = {
-        id: 'loc-' + Date.now(),
-        name: trimmedName,
-        client: locationForm.client.trim(),
-        city: locationForm.city.trim(),
-        notes: locationForm.notes.trim(),
-      };
-      setLocations((prev) => [...prev, newLoc]);
-      if (!dailyLocationId) {
-        setDailyLocationId(newLoc.id);
-      }
-    }
+    const targetId = editingLocationId || `loc-${Date.now()}`;
+    const locData: MachineryLocation = {
+      id: targetId,
+      name: trimmedName,
+      client: locationForm.client.trim(),
+      city: locationForm.city.trim(),
+      notes: locationForm.notes.trim(),
+    };
 
-    setIsAddingLocation(false);
-    setEditingLocationId(null);
+    try {
+      await setDoc(doc(db, 'maquinaria_ubicaciones', targetId), locData);
+      setIsAddingLocation(false);
+      setEditingLocationId(null);
+      if (!dailyLocationId) {
+        setDailyLocationId(targetId);
+      }
+    } catch (err) {
+      console.error('Error al guardar ubicación en Firestore:', err);
+      setLocationError('No se pudo guardar la ubicación en la nube.');
+    }
   };
 
-  const handleDeleteLocation = (id: string, name: string) => {
+  const handleDeleteLocation = async (id: string, name: string) => {
     if (locations.length <= 1) {
       alert('Debe existir al menos una ubicación en el catálogo.');
       return;
     }
-    if (window.confirm(`¿Estás seguro de eliminar la ubicación "${name}" del catálogo?`)) {
-      setLocations((prev) => prev.filter((l) => l.id !== id));
-      if (dailyLocationId === id) {
-        const remaining = locations.filter((l) => l.id !== id);
-        setDailyLocationId(remaining[0]?.id || '');
+    if (window.confirm(`¿Estás seguro de eliminar la ubicación "${name}" del catálogo? Se borrará de la nube.`)) {
+      try {
+        await deleteDoc(doc(db, 'maquinaria_ubicaciones', id));
+        if (dailyLocationId === id) {
+          const remaining = locations.filter((l) => l.id !== id);
+          setDailyLocationId(remaining[0]?.id || '');
+        }
+      } catch (err) {
+        console.error('Error al eliminar ubicación en Firestore:', err);
+        alert('No se pudo eliminar la ubicación.');
       }
     }
   };
 
-  const handleDeleteDailyLog = (id: string) => {
-    if (window.confirm('¿Deseas eliminar este registro de operación diaria?')) {
-      setDailyLogs((prev) => prev.filter((log) => log.id !== id));
+  const handleDeleteDailyLog = async (id: string) => {
+    if (window.confirm('¿Deseas eliminar este registro de operación diaria? Se borrará de la nube.')) {
+      try {
+        await deleteDoc(doc(db, 'maquinaria_registros', id));
+      } catch (err) {
+        console.error('Error al eliminar registro en Firestore:', err);
+        alert('No se pudo eliminar el registro.');
+      }
     }
   };
 
-  const handleDeleteMaintLog = (id: string) => {
-    if (window.confirm('¿Deseas eliminar este registro de mantenimiento?')) {
-      setMaintenanceLogs((prev) => prev.filter((m) => m.id !== id));
+  const handleDeleteMaintLog = async (id: string) => {
+    if (window.confirm('¿Deseas eliminar este registro de mantenimiento? Se borrará de la nube.')) {
+      try {
+        await deleteDoc(doc(db, 'maquinaria_mantenimientos', id));
+      } catch (err) {
+        console.error('Error al eliminar mantenimiento en Firestore:', err);
+        alert('No se pudo eliminar el servicio.');
+      }
     }
   };
 
@@ -807,11 +898,17 @@ export const MachineryControl: React.FC = () => {
       {/* ENCABEZADO Y PESTAÑAS */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-700 pb-4">
         <div>
-          <h3 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-white">
-            <span>🚜</span> Control y Rendimiento de Maquinaria
-          </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-white">
+              <span>🚜</span> Control y Rendimiento de Maquinaria
+            </h3>
+            <span className="inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 px-2.5 py-0.5 rounded-full font-bold shadow-sm">
+              <span className={`w-2 h-2 rounded-full ${cloudSynced ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+              <span>{cloudSynced ? 'En la nube (Sincronizado)' : 'Conectando a la nube...'}</span>
+            </span>
+          </div>
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
-            Gestión de catálogos de máquinas, operadores, horómetros diarios, horas extras, vales de campo y mantenimientos.
+            Gestión en tiempo real de máquinas, operadores, horómetros diarios, horas extras, vales de campo y mantenimientos.
           </p>
         </div>
 
