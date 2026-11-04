@@ -1,5 +1,12 @@
 import { useState, useEffect } from 'react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { 
+  onAuthStateChanged, 
+  signOut, 
+  type User,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential 
+} from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import Login from './components/Login';
@@ -18,8 +25,109 @@ import { PERMISOS_ADMIN, type UsuarioERP, type ModuloApp } from './types';
 export default function App() {
   const [activeView, setActiveView] = useState<ModuloApp>('obras');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ============================================================================
+  // MODO OSCURO / MODO CLARO
+  // ============================================================================
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('bench_theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : false;
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('bench_theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('bench_theme', 'light');
+    }
+  }, [darkMode]);
+
+  const toggleDarkMode = () => setDarkMode((prev) => !prev);
+
+  // ============================================================================
+  // MODAL CAMBIAR CONTRASEÑA
+  // ============================================================================
+  const [modalPasswordOpen, setModalPasswordOpen] = useState(false);
+  const [passActual, setPassActual] = useState('');
+  const [passNueva, setPassNueva] = useState('');
+  const [passConfirmar, setPassConfirmar] = useState('');
+  const [mostrarPass, setMostrarPass] = useState(false);
+  const [errorPass, setErrorPass] = useState('');
+  const [exitoPass, setExitoPass] = useState('');
+  const [cargandoPass, setCargandoPass] = useState(false);
+
+  const abrirModalPassword = () => {
+    setErrorPass('');
+    setExitoPass('');
+    setPassActual('');
+    setPassNueva('');
+    setPassConfirmar('');
+    setMostrarPass(false);
+    setModalPasswordOpen(true);
+    setSidebarOpen(false); // Si estaba abierto en móvil, cerrarlo para ver el modal
+  };
+
+  const handleCambiarPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorPass('');
+    setExitoPass('');
+
+    if (!usuarioActivo || !usuarioActivo.email) {
+      setErrorPass('No hay una sesión activa de usuario.');
+      return;
+    }
+    if (!passActual) {
+      setErrorPass('Por favor ingresa tu contraseña actual.');
+      return;
+    }
+    if (passNueva.length < 6) {
+      setErrorPass('La nueva contraseña debe contener al menos 6 caracteres.');
+      return;
+    }
+    if (passNueva !== passConfirmar) {
+      setErrorPass('La nueva contraseña y su confirmación no coinciden.');
+      return;
+    }
+
+    setCargandoPass(true);
+    try {
+      // 1. Reautenticar con la contraseña actual
+      const credential = EmailAuthProvider.credential(usuarioActivo.email, passActual);
+      await reauthenticateWithCredential(usuarioActivo, credential);
+
+      // 2. Actualizar la contraseña en Firebase Auth
+      await updatePassword(usuarioActivo, passNueva);
+
+      setExitoPass('¡Contraseña actualizada exitosamente! A partir de tu próximo inicio de sesión deberás usar tu nueva clave.');
+      setPassActual('');
+      setPassNueva('');
+      setPassConfirmar('');
+    } catch (err: any) {
+      console.error('Error al cambiar contraseña:', err);
+      if (
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'auth/invalid-login-credentials'
+      ) {
+        setErrorPass('La contraseña actual es incorrecta. Por favor verifica e intenta nuevamente.');
+      } else if (err.code === 'auth/weak-password') {
+        setErrorPass('La nueva contraseña es demasiado corta o débil. Debe tener al menos 6 caracteres.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setErrorPass('Demasiados intentos fallidos. Por seguridad, espera unos minutos antes de reintentar.');
+      } else {
+        setErrorPass('No se pudo actualizar la contraseña. Verifica que tu contraseña actual sea correcta.');
+      }
+    } finally {
+      setCargandoPass(false);
+    }
+  };
   
-  // Estados para el control de acceso (Firebase)
+  // ============================================================================
+  // SESIÓN Y AUTORIZACIÓN FIREBASE
+  // ============================================================================
   const [usuarioActivo, setUsuarioActivo] = useState<User | null>(null);
   const [perfilUsuario, setPerfilUsuario] = useState<UsuarioERP | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -112,10 +220,10 @@ export default function App() {
   // 1. Pantalla de carga mientras Firebase verifica sesión y perfil
   if (cargando) {
     return (
-      <div className="min-h-screen flex items-center justify-center font-bold text-gray-500 bg-gray-100">
+      <div className="min-h-screen flex items-center justify-center font-bold text-gray-500 bg-gray-100 dark:bg-gray-950 transition-colors">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm font-bold text-gray-700">Cargando ERP Ingeniería Bench...</span>
+          <div className="w-10 h-10 border-4 border-blue-600 dark:border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Cargando ERP Ingeniería Bench...</span>
         </div>
       </div>
     );
@@ -129,18 +237,18 @@ export default function App() {
   // 3. Si el usuario fue desactivado por el administrador, denegamos el acceso
   if (perfilUsuario && !perfilUsuario.activo) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border-t-4 border-red-500">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 font-black">
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-950 flex items-center justify-center p-4 transition-colors">
+        <div className="bg-white dark:bg-gray-900 p-8 rounded-2xl shadow-xl max-w-md w-full text-center border-t-4 border-red-500 border-x border-b border-gray-200 dark:border-gray-800">
+          <div className="w-16 h-16 bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 font-black">
             🚫
           </div>
-          <h2 className="text-xl font-black text-gray-900 mb-2">Cuenta Inactiva</h2>
-          <p className="text-xs text-gray-600 mb-6 leading-relaxed">
+          <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">Cuenta Inactiva</h2>
+          <p className="text-xs text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
             Tu cuenta ha sido desactivada por un administrador del sistema. Si consideras que es un error, por favor contacta al administrador de Ingeniería Bench para reactivar tus accesos.
           </p>
           <button
             onClick={cerrarSesion}
-            className="w-full bg-gray-900 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl text-xs transition-colors shadow-sm cursor-pointer"
+            className="w-full bg-gray-900 dark:bg-gray-800 hover:bg-gray-800 dark:hover:bg-gray-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors shadow-sm cursor-pointer"
           >
             Cerrar Sesión
           </button>
@@ -153,7 +261,7 @@ export default function App() {
   const moduloActual = menuCompleto.find(m => m.id === activeView);
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-sans print:h-auto print:block print:bg-white overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans print:h-auto print:block print:bg-white overflow-hidden transition-colors">
       
       {/* ======================================================== */}
       {/* BARRA SUPERIOR PARA CELULAR / MÓVIL (VISIBLE SOLO EN < MD) */}
@@ -180,12 +288,35 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Toggle Modo Oscuro / Claro en Móvil */}
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 text-xs cursor-pointer transition-colors"
+            title={darkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
+            aria-label="Alternar tema"
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
+
+          {/* Botón Cambiar Contraseña en Móvil */}
+          <button
+            type="button"
+            onClick={abrirModalPassword}
+            className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-blue-300 border border-gray-700 text-xs font-bold cursor-pointer transition-colors"
+            title="Cambiar Contraseña"
+            aria-label="Cambiar Contraseña"
+          >
+            🔑
+          </button>
+
           {perfilUsuario?.rol && (
-            <span className="text-[9px] bg-blue-900/80 text-blue-300 font-black px-2 py-0.5 rounded-full border border-blue-700/60">
+            <span className="text-[9px] bg-blue-900/80 text-blue-300 font-black px-2 py-0.5 rounded-full border border-blue-700/60 hidden sm:inline-block">
               {perfilUsuario.rol}
             </span>
           )}
+
           <button
             type="button"
             onClick={cerrarSesion}
@@ -262,7 +393,7 @@ export default function App() {
             <div className="flex items-center justify-between mb-1">
               <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Sesión Activa:</p>
               {perfilUsuario?.rol && (
-                <span className="text-[9px] bg-blue-900/60 text-blue-300 font-extrabold px-1.5 py-0.2 rounded-full border border-blue-800/40">
+                <span className="text-[9px] bg-blue-900/60 text-blue-300 font-extrabold px-1.5 py-0.5 rounded-full border border-blue-800/40">
                   {perfilUsuario.rol}
                 </span>
               )}
@@ -275,9 +406,30 @@ export default function App() {
             </p>
           </div>
           
+          {/* BOTONES DE ACCIÓN: CAMBIAR CONTRASEÑA Y TEMA */}
+          <div className="space-y-1.5 mb-3">
+            <button
+              type="button"
+              onClick={abrirModalPassword}
+              className="w-full flex items-center justify-center gap-1.5 bg-gray-800/90 hover:bg-gray-700 text-blue-300 hover:text-white border border-gray-700/70 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+            >
+              <span>🔑</span>
+              <span>Cambiar mi Contraseña</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleDarkMode}
+              className="w-full flex items-center justify-center gap-2 bg-gray-800/90 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700/70 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+            >
+              <span>{darkMode ? '☀️' : '🌙'}</span>
+              <span>{darkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}</span>
+            </button>
+          </div>
+
           <button 
             onClick={cerrarSesion} 
-            className="w-full bg-red-900/40 text-red-400 border border-red-800/50 py-2.5 md:py-2 rounded-xl text-xs font-bold hover:bg-red-700 hover:text-white hover:border-red-700 transition-colors shadow-sm cursor-pointer"
+            className="w-full bg-red-900/40 text-red-400 border border-red-800/50 py-2 rounded-xl text-xs font-bold hover:bg-red-700 hover:text-white hover:border-red-700 transition-colors shadow-sm cursor-pointer"
           >
             Cerrar Sesión
           </button>
@@ -291,7 +443,7 @@ export default function App() {
       {/* ======================================================== */}
       {/* ÁREA PRINCIPAL DE TRABAJO (MÓDULOS) */}
       {/* ======================================================== */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50 p-3 sm:p-5 md:p-8 print:p-0 print:overflow-visible print:block print:h-auto print:max-h-none">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-3 sm:p-5 md:p-8 print:p-0 print:overflow-visible print:block print:h-auto print:max-h-none transition-colors">
         <div className="max-w-7xl mx-auto w-full">
           {activeView === 'obras' && <Obras />}
           {activeView === 'almacen' && <Inventario />}
@@ -304,6 +456,155 @@ export default function App() {
           {activeView === 'usuarios' && <ControlUsuarios usuarioActualId={usuarioActivo.uid} />}
         </div>
       </main>
+
+      {/* ======================================================== */}
+      {/* MODAL: CAMBIAR CONTRASEÑA */}
+      {/* ======================================================== */}
+      {modalPasswordOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
+            
+            {/* Cabecera del Modal */}
+            <div className="p-4 sm:p-5 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-lg">
+                  🔑
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-900 dark:text-white leading-tight">
+                    Cambiar Contraseña
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    {usuarioActivo.email}
+                  </p>
+                </div>
+              </div>
+              
+              <button
+                type="button"
+                onClick={() => setModalPasswordOpen(false)}
+                className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                aria-label="Cerrar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Cuerpo del Formulario */}
+            <form onSubmit={handleCambiarPassword} className="p-5 sm:p-6 space-y-4">
+              {errorPass && (
+                <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 p-3 rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2">
+                  <span className="shrink-0 text-base">⚠️</span>
+                  <span>{errorPass}</span>
+                </div>
+              )}
+
+              {exitoPass ? (
+                <div className="space-y-4">
+                  <div className="bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-4 rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2">
+                    <span className="shrink-0 text-base">✅</span>
+                    <span>{exitoPass}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setModalPasswordOpen(false)}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors shadow-sm cursor-pointer"
+                  >
+                    Entendido / Cerrar
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-blue-50 dark:bg-blue-950/40 p-3 rounded-xl border border-blue-200 dark:border-blue-900/60 text-[11px] text-blue-900 dark:text-blue-300 leading-relaxed">
+                    Actualiza tu contraseña de acceso para proteger tu cuenta. Debe contener al menos 6 caracteres.
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Contraseña Actual (Asignada o Previa) *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={mostrarPass ? 'text' : 'password'}
+                        required
+                        value={passActual}
+                        onChange={(e) => setPassActual(e.target.value)}
+                        placeholder="Ingresa tu contraseña actual"
+                        className="w-full p-2.5 pr-10 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setMostrarPass(!mostrarPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs cursor-pointer"
+                        title={mostrarPass ? 'Ocultar' : 'Mostrar'}
+                      >
+                        {mostrarPass ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Nueva Contraseña *
+                    </label>
+                    <input
+                      type={mostrarPass ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={passNueva}
+                      onChange={(e) => setPassNueva(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Confirmar Nueva Contraseña *
+                    </label>
+                    <input
+                      type={mostrarPass ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={passConfirmar}
+                      onChange={(e) => setPassConfirmar(e.target.value)}
+                      placeholder="Vuelve a escribir la nueva contraseña"
+                      className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModalPasswordOpen(false)}
+                      disabled={cargandoPass}
+                      className="px-4 py-2 text-xs font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={cargandoPass}
+                      className={`bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors shadow-md cursor-pointer flex items-center gap-1.5 ${
+                        cargandoPass ? 'opacity-70 cursor-wait' : ''
+                      }`}
+                    >
+                      {cargandoPass ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Guardando...</span>
+                        </>
+                      ) : (
+                        <span>Guardar Nueva Contraseña</span>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
       
     </div>
   );
