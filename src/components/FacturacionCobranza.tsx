@@ -392,7 +392,12 @@ export default function FacturacionCobranza() {
   }, [invoices, obraSeleccionada]);
 
   const metricasFinancieras = useMemo(() => {
-    const montoContrato = Number(obraSeleccionada?.montoSubtotal) || 0;
+    // Monto Subtotal proveniente del módulo de Obras y Contratos
+    const subtotalContrato = Number(obraSeleccionada?.montoSubtotal) || 0;
+    // Cálculo del 16% de IVA
+    const ivaContrato = subtotalContrato * 0.16;
+    // MONTO CONTRATO NETO = Subtotal + 16% de IVA
+    const montoContratoNeto = subtotalContrato * 1.16;
 
     // Facturas emitidas (Pendientes + Pagadas; se ignoran Canceladas)
     const facturasValidas = facturasDeObra.filter((f) => f.estatus !== 'Cancelada');
@@ -402,19 +407,21 @@ export default function FacturacionCobranza() {
     const facturasPagadas = facturasDeObra.filter((f) => f.estatus === 'Pagada');
     const totalCobrado = facturasPagadas.reduce((sum, f) => sum + (Number(f.monto) || 0), 0);
 
-    // Saldo Pendiente por Facturar = Contrato - Total Facturado
-    const saldoPendienteFacturar = Math.max(0, montoContrato - totalFacturado);
-    const excedenteFacturado = totalFacturado > montoContrato ? totalFacturado - montoContrato : 0;
+    // Saldo Pendiente por Facturar = Monto Contrato Neto - Total Facturado
+    const saldoPendienteFacturar = Math.max(0, montoContratoNeto - totalFacturado);
+    const excedenteFacturado = totalFacturado > montoContratoNeto ? totalFacturado - montoContratoNeto : 0;
 
     // Saldo Pendiente por Cobrar = Total Facturado - Total Cobrado
     const saldoPendienteCobrar = Math.max(0, totalFacturado - totalCobrado);
 
-    // Porcentajes para barras de progreso
-    const pctFacturado = montoContrato > 0 ? Math.min(100, (totalFacturado / montoContrato) * 100) : 0;
+    // Porcentajes para barras de progreso respecto al Monto Contrato Neto
+    const pctFacturado = montoContratoNeto > 0 ? Math.min(100, (totalFacturado / montoContratoNeto) * 100) : 0;
     const pctCobrado = totalFacturado > 0 ? Math.min(100, (totalCobrado / totalFacturado) * 100) : 0;
 
     return {
-      montoContrato,
+      subtotalContrato,
+      ivaContrato,
+      montoContratoNeto,
       totalFacturado,
       totalCobrado,
       saldoPendienteFacturar,
@@ -678,11 +685,15 @@ export default function FacturacionCobranza() {
               onChange={(e) => setObraIdSeleccionada(e.target.value)}
               className="w-full p-2.5 sm:p-3 pr-8 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs sm:text-sm font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer appearance-none shadow-sm"
             >
-              {obras.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.nombre} ({o.cliente ? `${o.cliente} - ` : ''}{formatPesos(o.montoSubtotal)})
-                </option>
-              ))}
+              {obras.map((o) => {
+                const sub = Number(o.montoSubtotal) || 0;
+                const neto = sub * 1.16;
+                return (
+                  <option key={o.id} value={o.id}>
+                    {o.nombre} ({o.cliente ? `${o.cliente} - ` : ''}Neto: {formatPesos(neto)})
+                  </option>
+                );
+              })}
             </select>
             <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-xs">
               ▼
@@ -720,10 +731,13 @@ export default function FacturacionCobranza() {
           <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-2.5 rounded-xl border border-white/10 shrink-0">
             <div>
               <span className="block text-[10px] text-blue-200 uppercase font-bold tracking-wider">
-                Monto Base Contratado
+                MONTO CONTRATO NETO
               </span>
               <span className="text-xl sm:text-2xl font-black text-emerald-400">
-                {formatPesos(metricasFinancieras.montoContrato)}
+                {formatPesos(metricasFinancieras.montoContratoNeto)}
+              </span>
+              <span className="block text-[10px] text-blue-200/80 mt-0.5">
+                Subtotal: {formatPesos(metricasFinancieras.subtotalContrato)} + 16% IVA
               </span>
             </div>
           </div>
@@ -744,11 +758,11 @@ export default function FacturacionCobranza() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-          {/* TARJETA 1: MONTO TOTAL DEL CONTRATO */}
+          {/* TARJETA 1: MONTO CONTRATO NETO */}
           <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm relative overflow-hidden flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                Monto Contrato
+              <span className="text-xs font-black text-gray-700 dark:text-gray-200 uppercase tracking-wider">
+                MONTO CONTRATO NETO
               </span>
               <span className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-black">
                 📑
@@ -756,14 +770,15 @@ export default function FacturacionCobranza() {
             </div>
             <div className="mt-3">
               <div className="text-lg sm:text-xl font-black text-gray-900 dark:text-white">
-                {formatPesos(metricasFinancieras.montoContrato)}
+                {formatPesos(metricasFinancieras.montoContratoNeto)}
               </div>
               <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                Presupuesto base de obra
+                Subtotal: {formatPesos(metricasFinancieras.subtotalContrato)} + 16% IVA
               </p>
             </div>
-            <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800/80 text-[10px] text-blue-600 dark:text-blue-400 font-bold">
-              100% Importe Convenido
+            <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800/80 text-[10px] text-blue-600 dark:text-blue-400 font-bold flex justify-between items-center">
+              <span>IVA (16%):</span>
+              <span>{formatPesos(metricasFinancieras.ivaContrato)}</span>
             </div>
           </div>
 
@@ -850,7 +865,7 @@ export default function FacturacionCobranza() {
                 {formatPesos(metricasFinancieras.saldoPendienteFacturar)}
               </div>
               <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                Contrato remanente
+                Contrato neto remanente
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800/80 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
