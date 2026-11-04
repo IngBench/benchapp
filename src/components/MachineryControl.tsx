@@ -803,24 +803,24 @@ export const MachineryControl: React.FC = () => {
   }, [dailyLogs, filterMachineId]);
 
   return (
-    <div className="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700 space-y-6 text-white">
+    <div className="bg-gray-800 p-3 sm:p-5 md:p-6 rounded-xl shadow-xl border border-gray-700 space-y-5 text-white">
       {/* ENCABEZADO Y PESTAÑAS */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-700 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-700 pb-4">
         <div>
-          <h3 className="text-2xl font-bold flex items-center gap-2 text-white">
-            <span>🚜</span> Control y Rendimiento de Maquinaria Pesada
+          <h3 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-white">
+            <span>🚜</span> Control y Rendimiento de Maquinaria
           </h3>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">
             Gestión de catálogos de máquinas, operadores, horómetros diarios, horas extras, vales de campo y mantenimientos.
           </p>
         </div>
 
         {/* SELECTOR DE PESTAÑAS */}
-        <div className="flex flex-wrap bg-gray-900 p-1 rounded-lg border border-gray-700 gap-1">
+        <div className="flex items-center overflow-x-auto max-w-full bg-gray-900 p-1 rounded-lg border border-gray-700 gap-1 scrollbar-thin py-1.5 px-1.5">
           <button
             type="button"
             onClick={() => setActiveTab('daily')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all ${
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'daily'
                 ? 'bg-blue-600 text-white shadow'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -831,7 +831,7 @@ export const MachineryControl: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('maintenance')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all ${
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'maintenance'
                 ? 'bg-amber-600 text-white shadow'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -842,7 +842,7 @@ export const MachineryControl: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('machines')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'machines'
                 ? 'bg-red-600 text-white shadow'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -853,7 +853,7 @@ export const MachineryControl: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('operators')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'operators'
                 ? 'bg-emerald-600 text-white shadow'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -864,7 +864,7 @@ export const MachineryControl: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('locations')}
-            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`px-3 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'locations'
                 ? 'bg-cyan-600 text-white shadow'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -1034,21 +1034,21 @@ export const MachineryControl: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => {
                     setIsAddingMachine(false);
                     setMachineError(null);
                   }}
-                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs cursor-pointer"
+                  className="w-full sm:w-auto text-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 sm:py-1.5 px-4 rounded text-xs cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={!!duplicateNumberCheck}
-                  className={`font-bold py-1.5 px-5 rounded text-xs shadow flex items-center gap-1.5 ${
+                  className={`w-full sm:w-auto text-center justify-center font-bold py-2 sm:py-1.5 px-5 rounded text-xs shadow flex items-center gap-1.5 ${
                     duplicateNumberCheck
                       ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                       : 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
@@ -1213,17 +1213,17 @@ export const MachineryControl: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsAddingOperator(false)}
-                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs"
+                  className="w-full sm:w-auto text-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 sm:py-1.5 px-4 rounded text-xs cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-5 rounded text-xs shadow"
+                  className="w-full sm:w-auto text-center justify-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 sm:py-1.5 px-5 rounded text-xs shadow cursor-pointer"
                 >
                   {editingOperatorId ? 'Actualizar Operador' : 'Guardar Operador'}
                 </button>
@@ -1372,20 +1372,20 @@ export const MachineryControl: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => {
                     setIsAddingLocation(false);
                     setLocationError(null);
                   }}
-                  className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-4 rounded text-xs cursor-pointer"
+                  className="w-full sm:w-auto text-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 sm:py-1.5 px-4 rounded text-xs cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-5 rounded text-xs shadow cursor-pointer"
+                  className="w-full sm:w-auto text-center justify-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 sm:py-1.5 px-5 rounded text-xs shadow cursor-pointer"
                 >
                   {editingLocationId ? 'Actualizar Ubicación' : 'Guardar en Catálogo'}
                 </button>
@@ -1453,22 +1453,22 @@ export const MachineryControl: React.FC = () => {
       {/* ======================================================================== */}
       {/* DASHBOARD DE RENDIMIENTO (VISIBLE EN TODAS LAS PESTAÑAS) */}
       {/* ======================================================================== */}
-      <div className="bg-gray-900/80 p-5 rounded-lg border border-gray-700">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div className="bg-gray-900/80 p-3.5 sm:p-5 rounded-xl border border-gray-700">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
             <span className="text-xl">📊</span>
             <div>
-              <h4 className="text-base font-bold text-white uppercase tracking-wider">
+              <h4 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider">
                 Dashboard de Rendimiento
               </h4>
               <p className="text-xs text-gray-400">
-                Selecciona una máquina para auditar su rendimiento histórico, horas acumuladas y horas extras.
+                Selecciona una máquina para auditar su rendimiento histórico y horas.
               </p>
             </div>
           </div>
 
           {/* BOTONES SELECTORES DE MÁQUINA: ÍCONO Y NÚMERO */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center overflow-x-auto max-w-full gap-2 pb-1 sm:pb-0 scrollbar-thin">
             {machines.map((mach) => {
               const isSelected = mach.id === dashboardMachineId;
               return (
@@ -1477,7 +1477,7 @@ export const MachineryControl: React.FC = () => {
                   type="button"
                   onClick={() => setDashboardMachineId(mach.id)}
                   title={`Máquina ${mach.numero}: ${mach.marca} ${mach.modelo} (${mach.anio}) - ${mach.currentHours.toFixed(1)} hrs`}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-black border transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black border transition-all flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0 whitespace-nowrap ${
                     isSelected
                       ? 'bg-red-600 border-red-500 text-white shadow-lg ring-2 ring-red-400/50 scale-105'
                       : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white'
@@ -1493,13 +1493,13 @@ export const MachineryControl: React.FC = () => {
 
         {/* PANEL DE DETALLE DE LA MÁQUINA SELECCIONADA */}
         {selectedDashMachine && (
-          <div className="mb-4 bg-gray-800/90 rounded-lg p-3.5 border border-gray-700/80 flex flex-wrap items-center justify-between gap-3 shadow-inner">
+          <div className="mb-4 bg-gray-800/90 rounded-lg p-3 sm:p-3.5 border border-gray-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-inner">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-red-600/20 border border-red-500/40 text-red-400 flex items-center justify-center text-xl shrink-0">
                 🚜
               </div>
               <div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <span className="text-white font-black text-sm uppercase tracking-wide">
                     Máquina {selectedDashMachine.numero}: {selectedDashMachine.marca} {selectedDashMachine.modelo}
                   </span>
@@ -1515,17 +1515,17 @@ export const MachineryControl: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400 mt-1">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 mt-1">
                   <span>
                     Horómetro actual: <strong className="text-amber-400 font-mono font-bold">{selectedDashMachine.currentHours.toFixed(1)} hrs</strong>
                   </span>
-                  <span>•</span>
+                  <span className="hidden sm:inline">•</span>
                   <span>
-                    Jornadas registradas: <strong className="text-blue-300 font-mono font-bold">{dashStats.totalLogs}</strong>
+                    Jornadas: <strong className="text-blue-300 font-mono font-bold">{dashStats.totalLogs}</strong>
                   </span>
-                  <span>•</span>
+                  <span className="hidden sm:inline">•</span>
                   <span>
-                    Servicios mecánicos: <strong className="text-indigo-300 font-mono font-bold">{dashStats.totalServices}</strong>
+                    Servicios: <strong className="text-indigo-300 font-mono font-bold">{dashStats.totalServices}</strong>
                   </span>
                 </div>
               </div>
@@ -1537,7 +1537,7 @@ export const MachineryControl: React.FC = () => {
                 setActiveTab('machines');
                 handleOpenEditMachine(selectedDashMachine);
               }}
-              className="text-[11px] bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="w-full sm:w-auto justify-center text-[11px] bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
             >
               <span>✏️</span>
               <span>Ver / Editar Ficha Máquina {selectedDashMachine.numero}</span>
@@ -1849,14 +1849,14 @@ export const MachineryControl: React.FC = () => {
           </div>
 
           {/* BOTÓN GUARDAR */}
-          <div className="flex justify-between items-center pt-2">
+          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-2">
             <span className="text-xs text-gray-400">
               Al guardar, se actualizará el horómetro actual de{' '}
               <strong className="text-white">{activeDailyMachine?.marca} {activeDailyMachine?.modelo}</strong>.
             </span>
             <button
               type="submit"
-              className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+              className="w-full sm:w-auto justify-center bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg cursor-pointer"
             >
               <span>💾</span> Guardar Registro Diario
             </button>
@@ -1959,7 +1959,7 @@ export const MachineryControl: React.FC = () => {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+              className="w-full sm:w-auto justify-center bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg cursor-pointer"
             >
               <span>🛠️</span> Guardar Registro de Mantenimiento
             </button>
@@ -2007,9 +2007,9 @@ export const MachineryControl: React.FC = () => {
       {/* HISTORIAL GENERAL DE OPERACIÓN DIARIA */}
       {/* ======================================================================== */}
       <div className="space-y-3 pt-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+            <h4 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
               <span>📜</span> Historial General de Operación Diaria
             </h4>
             <p className="text-xs text-gray-400">
@@ -2018,12 +2018,12 @@ export const MachineryControl: React.FC = () => {
           </div>
 
           {/* FILTRO POR MÁQUINA */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-gray-400 font-semibold">Filtrar:</span>
+          <div className="flex items-center gap-2 text-xs w-full sm:w-auto">
+            <span className="text-gray-400 font-semibold shrink-0">Filtrar:</span>
             <select
               value={filterMachineId}
               onChange={(e) => setFilterMachineId(e.target.value)}
-              className="bg-gray-700 border border-gray-600 rounded-lg py-1.5 px-3 text-white text-xs font-semibold focus:ring-red-500 focus:border-red-500"
+              className="w-full sm:w-auto bg-gray-700 border border-gray-600 rounded-lg py-1.5 px-3 text-white text-xs font-semibold focus:ring-red-500 focus:border-red-500"
             >
               <option value="all">Todas las Máquinas ({dailyLogs.length})</option>
               {machines.map((m) => (
