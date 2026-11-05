@@ -697,8 +697,18 @@ export default function FacturacionCobranza() {
   const [obraDestinoImportId, setObraDestinoImportId] = useState<string>(() => obraIdSeleccionada);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Modal para ver desglose de Abonos 1 al 4 de una factura
-  const [facturaDetalleAbonos, setFacturaDetalleAbonos] = useState<Invoice | null>(null);
+  // Modal para ver y editar desglose de Abonos 1 al 4 y estatus de una factura
+  const [facturaAbonosEditando, setFacturaAbonosEditando] = useState<Invoice | null>(null);
+  const [formAbono1, setFormAbono1] = useState('');
+  const [formFechaAbono1, setFormFechaAbono1] = useState('');
+  const [formAbono2, setFormAbono2] = useState('');
+  const [formFechaAbono2, setFormFechaAbono2] = useState('');
+  const [formAbono3, setFormAbono3] = useState('');
+  const [formFechaAbono3, setFormFechaAbono3] = useState('');
+  const [formAbono4, setFormAbono4] = useState('');
+  const [formFechaAbono4, setFormFechaAbono4] = useState('');
+  const [formEstatusModal, setFormEstatusModal] = useState<EstatusFactura>('Pendiente');
+  const [formNotasModal, setFormNotasModal] = useState('');
 
   // Estados del Formulario Manual de Factura
   const [folio, setFolio] = useState('');
@@ -1435,6 +1445,70 @@ export default function FacturacionCobranza() {
       setExitoForm(`Se eliminaron las ${cant} facturas correctamente.`);
       setTimeout(() => setExitoForm(null), 5000);
     }
+  };
+
+  // Abrir modal para cargar y gestionar abonos a una factura
+  const handleAbrirAbonosModal = (inv: Invoice) => {
+    setFacturaAbonosEditando(inv);
+    setFormAbono1(inv.abono1 ? String(inv.abono1) : '');
+    setFormFechaAbono1(inv.fechaAbono1 || '');
+    setFormAbono2(inv.abono2 ? String(inv.abono2) : '');
+    setFormFechaAbono2(inv.fechaAbono2 || '');
+    setFormAbono3(inv.abono3 ? String(inv.abono3) : '');
+    setFormFechaAbono3(inv.fechaAbono3 || '');
+    setFormAbono4(inv.abono4 ? String(inv.abono4) : '');
+    setFormFechaAbono4(inv.fechaAbono4 || '');
+    setFormEstatusModal(inv.estatus);
+    setFormNotasModal(inv.notas || '');
+  };
+
+  // Guardar abonos y estatus modificados en la factura
+  const handleGuardarAbonosModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!facturaAbonosEditando) return;
+
+    const ab1 = parseExcelNumber(formAbono1);
+    const ab2 = parseExcelNumber(formAbono2);
+    const ab3 = parseExcelNumber(formAbono3);
+    const ab4 = parseExcelNumber(formAbono4);
+    const totalAbonado = ab1 + ab2 + ab3 + ab4;
+    const saldoPendiente = Math.max(0, facturaAbonosEditando.monto - totalAbonado);
+
+    let estatusFinal = formEstatusModal;
+    // Si el usuario tenía estatus 'Pendiente' pero el monto está totalmente cubierto:
+    if (
+      facturaAbonosEditando.monto > 0 &&
+      totalAbonado >= facturaAbonosEditando.monto &&
+      estatusFinal === 'Pendiente'
+    ) {
+      estatusFinal = 'Pagada';
+    }
+
+    setInvoices((prev) =>
+      prev.map((inv) =>
+        inv.id === facturaAbonosEditando.id
+          ? {
+              ...inv,
+              abono1: ab1,
+              fechaAbono1: formFechaAbono1,
+              abono2: ab2,
+              fechaAbono2: formFechaAbono2,
+              abono3: ab3,
+              fechaAbono3: formFechaAbono3,
+              abono4: ab4,
+              fechaAbono4: formFechaAbono4,
+              totalAbonado,
+              saldoPendiente,
+              estatus: estatusFinal,
+              notas: formNotasModal.trim(),
+            }
+          : inv
+      )
+    );
+
+    setExitoForm(`¡Abonos y estatus de la factura ${facturaAbonosEditando.folio} actualizados correctamente!`);
+    setFacturaAbonosEditando(null);
+    setTimeout(() => setExitoForm(null), 4000);
   };
 
   // --------------------------------------------------------------------------
@@ -2423,31 +2497,36 @@ export default function FacturacionCobranza() {
                         </div>
                       </td>
 
-                      {/* ESTATUS BADGE */}
+                      {/* ESTATUS BADGE Y SELECTOR MANUAL */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
-                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          inv.estatus === 'Pagada'
-                            ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                            : inv.estatus === 'Pendiente'
-                            ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 animate-pulse'
-                            : 'bg-red-100 dark:bg-red-950/70 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 line-through'
-                        }`}>
-                          {inv.estatus === 'Pagada' && '🟢 PAGADA'}
-                          {inv.estatus === 'Pendiente' && '🟡 PENDIENTE'}
-                          {inv.estatus === 'Cancelada' && '🔴 CANCELADA'}
-                        </span>
+                        <select
+                          value={inv.estatus}
+                          onChange={(e) => handleCambiarEstatus(inv.id, e.target.value as EstatusFactura)}
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors shadow-xs ${
+                            inv.estatus === 'Pagada'
+                              ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                              : inv.estatus === 'Pendiente'
+                              ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                              : 'bg-red-100 dark:bg-red-950/70 text-red-800 dark:text-red-300 border-red-300 dark:border-red-800 line-through'
+                          }`}
+                          title="Cambiar estatus de la factura manualmente"
+                        >
+                          <option value="Pendiente" className="bg-white dark:bg-gray-800 text-amber-700 font-bold">🟡 PENDIENTE</option>
+                          <option value="Pagada" className="bg-white dark:bg-gray-800 text-emerald-700 font-bold">🟢 PAGADA</option>
+                          <option value="Cancelada" className="bg-white dark:bg-gray-800 text-red-700 font-bold">🔴 CANCELADA</option>
+                        </select>
                       </td>
 
-                      {/* BOTÓN VER DESGLOSE DE ABONOS */}
+                      {/* BOTÓN CARGAR Y EDITAR ABONOS */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => setFacturaDetalleAbonos(inv)}
-                          className="bg-blue-50 dark:bg-blue-950/70 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold px-2 py-1 rounded-lg text-[10px] transition-colors cursor-pointer inline-flex items-center gap-1 shadow-xs"
-                          title="Ver desglose detallado de Abonos 1 al 4 y fechas de cobro"
+                          onClick={() => handleAbrirAbonosModal(inv)}
+                          className="bg-blue-50 dark:bg-blue-950/70 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold px-2.5 py-1 rounded-lg text-[10px] transition-colors cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                          title="Cargar o modificar abonos y fechas de cobro"
                         >
                           <span>💳</span>
-                          <span>{abonosCount > 0 ? `${abonosCount} Abono(s)` : 'Ver Abonos'}</span>
+                          <span>{abonosCount > 0 ? `${abonosCount} Abono(s) / Editar` : '+ Cargar Abono'}</span>
                         </button>
                       </td>
 
@@ -3031,143 +3110,261 @@ export default function FacturacionCobranza() {
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: DESGLOSE DETALLADO DE ABONOS (1 AL 4) */}
+      {/* MODAL: CARGAR Y EDITAR ABONOS DE LA FACTURA */}
       {/* ======================================================== */}
-      {facturaDetalleAbonos && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
+      {facturaAbonosEditando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
             
             {/* Cabecera */}
-            <div className="p-4 sm:p-5 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/30 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/30 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xl shadow-sm">
                   💳
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-gray-900 dark:text-white leading-tight">
-                    Desglose de Abonos — Folio: {facturaDetalleAbonos.folio}
+                  <h3 className="text-base sm:text-lg font-black text-gray-900 dark:text-white leading-tight">
+                    Cargar Abonos — Folio: {facturaAbonosEditando.folio}
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                    {facturaDetalleAbonos.descripcion || facturaDetalleAbonos.concepto} ({facturaDetalleAbonos.fechaEmision})
+                    {facturaAbonosEditando.descripcion || facturaAbonosEditando.concepto} | Monto Factura:{' '}
+                    <strong className="text-gray-800 dark:text-gray-200 font-black">
+                      {formatPesos(facturaAbonosEditando.monto)}
+                    </strong>
                   </p>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => setFacturaDetalleAbonos(null)}
+                onClick={() => setFacturaAbonosEditando(null)}
                 className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
               >
                 ✕
               </button>
             </div>
 
-            {/* Contenido de Abonos */}
-            <div className="p-5 space-y-4 text-xs">
+            {/* Formulario de Carga y Edición de Abonos */}
+            <form onSubmit={handleGuardarAbonosModal} className="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs">
               
-              {/* Tarjetas de los 4 Abonos */}
-              <div className="grid grid-cols-2 gap-3">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Registra o modifica los abonos recibidos con su fecha de cobro correspondiente. Los saldos del Dashboard se actualizarán automáticamente.
+              </p>
+
+              {/* 4 Tarjetas Editables de Abonos */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {/* ABONO 1 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 1</span>
-                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono1 || 'Sin fecha'}</span>
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                      Abono 1 ($ MXN)
+                    </span>
+                    <span className="text-[10px] text-gray-400">Primer cobro</span>
                   </div>
-                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                    {formatPesos(Number(facturaDetalleAbonos.abono1) || 0)}
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={formAbono1}
+                      onChange={(e) => setFormAbono1(e.target.value)}
+                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 1:</label>
+                    <input
+                      type="date"
+                      value={formFechaAbono1}
+                      onChange={(e) => setFormFechaAbono1(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
                   </div>
                 </div>
 
                 {/* ABONO 2 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 2</span>
-                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono2 || 'Sin fecha'}</span>
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                      Abono 2 ($ MXN)
+                    </span>
+                    <span className="text-[10px] text-gray-400">Segundo cobro</span>
                   </div>
-                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                    {formatPesos(Number(facturaDetalleAbonos.abono2) || 0)}
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={formAbono2}
+                      onChange={(e) => setFormAbono2(e.target.value)}
+                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 2:</label>
+                    <input
+                      type="date"
+                      value={formFechaAbono2}
+                      onChange={(e) => setFormFechaAbono2(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
                   </div>
                 </div>
 
                 {/* ABONO 3 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 3</span>
-                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono3 || 'Sin fecha'}</span>
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                      Abono 3 ($ MXN)
+                    </span>
+                    <span className="text-[10px] text-gray-400">Tercer cobro</span>
                   </div>
-                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                    {formatPesos(Number(facturaDetalleAbonos.abono3) || 0)}
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={formAbono3}
+                      onChange={(e) => setFormAbono3(e.target.value)}
+                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 3:</label>
+                    <input
+                      type="date"
+                      value={formFechaAbono3}
+                      onChange={(e) => setFormFechaAbono3(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
                   </div>
                 </div>
 
                 {/* ABONO 4 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 4</span>
-                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono4 || 'Sin fecha'}</span>
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                      Abono 4 ($ MXN)
+                    </span>
+                    <span className="text-[10px] text-gray-400">Cuarto cobro / Liquidación</span>
                   </div>
-                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                    {formatPesos(Number(facturaDetalleAbonos.abono4) || 0)}
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={formAbono4}
+                      onChange={(e) => setFormAbono4(e.target.value)}
+                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 4:</label>
+                    <input
+                      type="date"
+                      value={formFechaAbono4}
+                      onChange={(e) => setFormFechaAbono4(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
                   </div>
                 </div>
               </div>
 
-              {/* Resumen Final de la Factura */}
-              <div className="bg-gray-100 dark:bg-gray-800/90 p-4 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                <div className="flex justify-between items-center text-gray-600 dark:text-gray-300">
-                  <span>Monto Total de la Factura:</span>
-                  <span className="font-black text-sm text-gray-900 dark:text-white">
-                    {formatPesos(facturaDetalleAbonos.monto)}
-                  </span>
+              {/* CAMBIO MANUAL DE ESTATUS Y NOTAS */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-gray-50 dark:bg-gray-800/50 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700">
+                <div>
+                  <label className="block text-xs font-black text-gray-800 dark:text-gray-200 mb-1">
+                    Estatus de la Factura *
+                  </label>
+                  <select
+                    value={formEstatusModal}
+                    onChange={(e) => setFormEstatusModal(e.target.value as EstatusFactura)}
+                    className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="Pendiente">🟡 Pendiente de Pago</option>
+                    <option value="Pagada">🟢 Pagada / Cobrada</option>
+                    <option value="Cancelada">🔴 Cancelada</option>
+                  </select>
                 </div>
 
-                <div className="flex justify-between items-center text-emerald-700 dark:text-emerald-400 font-bold">
-                  <span>Total Cobrado en Abonos:</span>
-                  <span className="text-sm">
-                    {formatPesos(
-                      Number(facturaDetalleAbonos.totalAbonado) > 0
-                        ? Number(facturaDetalleAbonos.totalAbonado)
-                        : facturaDetalleAbonos.estatus === 'Pagada'
-                        ? facturaDetalleAbonos.monto
-                        : 0
-                    )}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center pt-2 border-t border-gray-200 dark:border-gray-700">
-                  <span className="font-black text-gray-800 dark:text-gray-200">Saldo Pendiente:</span>
-                  <span className="font-black text-sm text-red-600 dark:text-red-400">
-                    {formatPesos(
-                      Math.max(
-                        0,
-                        facturaDetalleAbonos.monto -
-                          (Number(facturaDetalleAbonos.totalAbonado) > 0
-                            ? Number(facturaDetalleAbonos.totalAbonado)
-                            : facturaDetalleAbonos.estatus === 'Pagada'
-                            ? facturaDetalleAbonos.monto
-                            : 0)
-                      )
-                    )}
-                  </span>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Notas / Referencia de Pago (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Transferencia Bancomer #88392, cheque o retenciones..."
+                    value={formNotasModal}
+                    onChange={(e) => setFormNotasModal(e.target.value)}
+                    className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
                 </div>
               </div>
 
-              {facturaDetalleAbonos.notas && (
-                <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">
-                  <strong>Notas / Referencia:</strong> {facturaDetalleAbonos.notas}
-                </div>
-              )}
-            </div>
+              {/* RESUMEN FINANCIERO EN VIVO */}
+              {(() => {
+                const a1 = parseExcelNumber(formAbono1);
+                const a2 = parseExcelNumber(formAbono2);
+                const a3 = parseExcelNumber(formAbono3);
+                const a4 = parseExcelNumber(formAbono4);
+                const tot = a1 + a2 + a3 + a4;
+                const saldo = Math.max(0, facturaAbonosEditando.monto - tot);
+                const cubierto = tot >= facturaAbonosEditando.monto && facturaAbonosEditando.monto > 0;
 
-            <div className="p-4 bg-gray-50 dark:bg-gray-800/60 border-t border-gray-200 dark:border-gray-800 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setFacturaDetalleAbonos(null)}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-black px-5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Entendido / Cerrar
-              </button>
-            </div>
+                return (
+                  <div className="bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-teal-50/60 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-teal-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/60 space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-gray-600 dark:text-gray-300 font-semibold">Monto Total Factura:</span>
+                      <span className="font-black text-gray-900 dark:text-white">{formatPesos(facturaAbonosEditando.monto)}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs text-emerald-700 dark:text-emerald-400 font-bold">
+                      <span>Total Cobrado en Abonos:</span>
+                      <span className="text-sm font-black">{formatPesos(tot)}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs pt-1.5 border-t border-gray-200 dark:border-gray-700 font-black">
+                      <span className="text-gray-800 dark:text-gray-200">Saldo Pendiente por Cobrar:</span>
+                      <span className={`text-sm ${saldo > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {formatPesos(saldo)}
+                      </span>
+                    </div>
+
+                    {cubierto && (
+                      <div className="text-[10px] bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 p-1.5 rounded-lg text-center font-bold">
+                        ✓ El monto total está cubierto. Al guardar se marcará automáticamente como PAGADA.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Botones de acción del modal */}
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setFacturaAbonosEditando(null)}
+                  className="px-4 py-2 text-xs font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-black px-6 py-2.5 rounded-xl text-xs transition-colors shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <span>💾</span>
+                  <span>Guardar Abonos y Cambios</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
