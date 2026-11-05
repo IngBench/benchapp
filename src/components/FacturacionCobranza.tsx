@@ -47,9 +47,10 @@ export interface Invoice {
 export const parseExcelDate = (val: any): string => {
   if (!val && val !== 0) return '';
   if (val instanceof Date) {
-    const y = val.getFullYear();
-    const m = String(val.getMonth() + 1).padStart(2, '0');
-    const d = String(val.getDate()).padStart(2, '0');
+    // Usar métodos UTC para evitar desfase de -1 día por zonas horarias locales
+    const y = val.getUTCFullYear();
+    const m = String(val.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(val.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
   if (typeof val === 'number') {
@@ -89,9 +90,9 @@ export const parseExcelDate = (val: any): string => {
     }
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
       return `${y}-${m}-${day}`;
     }
     return str;
@@ -103,7 +104,8 @@ export const parseExcelNumber = (val: any): number => {
   if (val === null || val === undefined || val === '') return 0;
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (typeof val === 'string') {
-    const cleaned = val.replace(/[$ ,]/g, '').trim();
+    // Elimina signos de moneda, comas, espacios y cualquier caracter no numérico (excepto punto decimal y guión)
+    const cleaned = val.replace(/[^0-9.-]/g, '').trim();
     const num = parseFloat(cleaned);
     return isNaN(num) ? 0 : num;
   }
