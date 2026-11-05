@@ -110,7 +110,7 @@ export const parseExcelNumber = (val: any): number => {
   return 0;
 };
 
-export const procesarFilaExcel = (row: Record<string, any>, index: number, obraIdTarget: string): Invoice => {
+export const procesarFilaExcel = (row: Record<string, any>, index: number, obraIdTarget: string): Invoice | null => {
   const mapa: Record<string, any> = {};
   Object.keys(row).forEach((k) => {
     const keyNorm = k
@@ -121,11 +121,148 @@ export const procesarFilaExcel = (row: Record<string, any>, index: number, obraI
     mapa[keyNorm] = row[k];
   });
 
-  const rawFecha = mapa['fechafactura'] || mapa['fecha'] || mapa['fechadeemision'] || mapa['emision'];
+  const rawFecha =
+    mapa['fechafactura'] ||
+    mapa['fecha'] ||
+    mapa['fechaemision'] ||
+    mapa['fechadeemision'] ||
+    mapa['emision'] ||
+    mapa['fechadoc'] ||
+    mapa['fechadocto'] ||
+    mapa['fecfactura'] ||
+    mapa['fecfac'] ||
+    mapa['date'];
   const fechaFactura = parseExcelDate(rawFecha) || new Date().toISOString().split('T')[0];
 
-  const serie = String(mapa['serie'] || '').trim();
-  const numeroFactura = String(mapa['numerodefactura'] || mapa['numerofactura'] || mapa['numero'] || mapa['folio'] || '').trim();
+  const serie = String(
+    mapa['serie'] || mapa['ser'] || mapa['seriefactura'] || mapa['seriefac'] || ''
+  ).trim();
+
+  const numeroFactura = String(
+    mapa['numerodefactura'] ||
+      mapa['numerofactura'] ||
+      mapa['numfactura'] ||
+      mapa['nofactura'] ||
+      mapa['numerofac'] ||
+      mapa['nofac'] ||
+      mapa['nofact'] ||
+      mapa['numfac'] ||
+      mapa['factura'] ||
+      mapa['folio'] ||
+      mapa['foliodocto'] ||
+      mapa['numero'] ||
+      mapa['num'] ||
+      mapa['no'] ||
+      mapa['docto'] ||
+      ''
+  ).trim();
+
+  const descripcion = String(
+    mapa['descripcion'] ||
+      mapa['concepto'] ||
+      mapa['conceptofacturacion'] ||
+      mapa['detalle'] ||
+      mapa['trabajos'] ||
+      mapa['observaciones'] ||
+      mapa['referencia'] ||
+      mapa['alcance'] ||
+      ''
+  ).trim();
+
+  const rawMonto =
+    mapa['montofactura'] ||
+    mapa['monto'] ||
+    mapa['montototal'] ||
+    mapa['totalfactura'] ||
+    mapa['total'] ||
+    mapa['importe'] ||
+    mapa['importefactura'] ||
+    mapa['subtotal'] ||
+    mapa['neto'] ||
+    mapa['totalneto'] ||
+    mapa['amount'];
+  const montoFactura = parseExcelNumber(rawMonto);
+
+  const abono1 = parseExcelNumber(
+    mapa['abono1'] ||
+      mapa['abono01'] ||
+      mapa['pago1'] ||
+      mapa['pago01'] ||
+      mapa['cobro1'] ||
+      mapa['anticipo1'] ||
+      mapa['primerabono'] ||
+      mapa['1erabono']
+  );
+  const fechaAbono1 = parseExcelDate(
+    mapa['fechaabono1'] ||
+      mapa['fechaabono01'] ||
+      mapa['fechapago1'] ||
+      mapa['fechapago01'] ||
+      mapa['fechacobro1'] ||
+      mapa['fecha1']
+  );
+
+  const abono2 = parseExcelNumber(
+    mapa['abono2'] ||
+      mapa['abono02'] ||
+      mapa['pago2'] ||
+      mapa['pago02'] ||
+      mapa['cobro2'] ||
+      mapa['segundoabono'] ||
+      mapa['2doabono']
+  );
+  const fechaAbono2 = parseExcelDate(
+    mapa['fechaabono2'] ||
+      mapa['fechaabono02'] ||
+      mapa['fechapago2'] ||
+      mapa['fechapago02'] ||
+      mapa['fechacobro2'] ||
+      mapa['fecha2']
+  );
+
+  const abono3 = parseExcelNumber(
+    mapa['abono3'] ||
+      mapa['abono03'] ||
+      mapa['pago3'] ||
+      mapa['pago03'] ||
+      mapa['cobro3'] ||
+      mapa['tercerabono'] ||
+      mapa['3erabono']
+  );
+  const fechaAbono3 = parseExcelDate(
+    mapa['fechaabono3'] ||
+      mapa['fechaabono03'] ||
+      mapa['fechapago3'] ||
+      mapa['fechapago03'] ||
+      mapa['fechacobro3'] ||
+      mapa['fecha3']
+  );
+
+  const abono4 = parseExcelNumber(
+    mapa['abono4'] ||
+      mapa['abono04'] ||
+      mapa['pago4'] ||
+      mapa['pago04'] ||
+      mapa['cobro4'] ||
+      mapa['cuartoabono'] ||
+      mapa['4toabono']
+  );
+  const fechaAbono4 = parseExcelDate(
+    mapa['fechaabono4'] ||
+      mapa['fechaabono04'] ||
+      mapa['fechapago4'] ||
+      mapa['fechapago04'] ||
+      mapa['fechacobro4'] ||
+      mapa['fecha4']
+  );
+
+  const totalAbonado = abono1 + abono2 + abono3 + abono4;
+  const saldoPendiente = Math.max(0, montoFactura - totalAbonado);
+
+  // VALIDACIÓN ESTRICTA: si no tiene número de factura, ni serie, ni monto > 0, ni abonos > 0, ni descripción real, es una fila vacía o basura
+  if (!serie && !numeroFactura && montoFactura === 0 && totalAbonado === 0 && !descripcion) {
+    return null;
+  }
 
   let folio = '';
   if (serie && numeroFactura) {
@@ -137,25 +274,6 @@ export const procesarFilaExcel = (row: Record<string, any>, index: number, obraI
   } else {
     folio = `FAC-${String(index + 1).padStart(3, '0')}`;
   }
-
-  const descripcion = String(mapa['descripcion'] || mapa['concepto'] || 'Estimación de Obra').trim();
-  const rawMonto = mapa['montofactura'] || mapa['monto'] || mapa['total'] || mapa['importe'];
-  const montoFactura = parseExcelNumber(rawMonto);
-
-  const abono1 = parseExcelNumber(mapa['abono1'] || mapa['pago1']);
-  const fechaAbono1 = parseExcelDate(mapa['fechaabono1'] || mapa['fechapago1']);
-
-  const abono2 = parseExcelNumber(mapa['abono2'] || mapa['pago2']);
-  const fechaAbono2 = parseExcelDate(mapa['fechaabono2'] || mapa['fechapago2']);
-
-  const abono3 = parseExcelNumber(mapa['abono3'] || mapa['pago3']);
-  const fechaAbono3 = parseExcelDate(mapa['fechaabono3'] || mapa['fechapago3']);
-
-  const abono4 = parseExcelNumber(mapa['abono4'] || mapa['pago4']);
-  const fechaAbono4 = parseExcelDate(mapa['fechaabono4'] || mapa['fechapago4']);
-
-  const totalAbonado = abono1 + abono2 + abono3 + abono4;
-  const saldoPendiente = Math.max(0, montoFactura - totalAbonado);
 
   let estatus: EstatusFactura = 'Pendiente';
   if (montoFactura > 0 && totalAbonado >= montoFactura) {
@@ -170,8 +288,8 @@ export const procesarFilaExcel = (row: Record<string, any>, index: number, obraI
     serie,
     numeroFactura,
     obraId: obraIdTarget,
-    concepto: descripcion,
-    descripcion,
+    concepto: descripcion || 'Estimación de Obra',
+    descripcion: descripcion || 'Estimación de Obra',
     fechaEmision: fechaFactura,
     monto: montoFactura,
     abono1,
@@ -955,7 +1073,7 @@ export default function FacturacionCobranza() {
   // MANEJADORES DE IMPORTACIÓN Y EXPORTACIÓN DESDE EXCEL
   // ==========================================================================
 
-  // Procesar archivo Excel subido
+  // Procesar archivo Excel subido con detección inteligente de encabezados y múltiples hojas
   const handleProcesarArchivoExcel = (file: File) => {
     setErrorImportarExcel(null);
     setArchivoExcelSeleccionado(file);
@@ -967,18 +1085,95 @@ export default function FacturacionCobranza() {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-        const firstSheetName = workbook.SheetNames[0];
-        if (!firstSheetName) {
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
           setErrorImportarExcel('El archivo no contiene ninguna hoja de cálculo.');
           setCargandoImportacion(false);
           return;
         }
 
-        const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+        // Palabras clave para identificar la fila que realmente contiene los encabezados
+        const palabrasClave = [
+          'fecha',
+          'serie',
+          'factura',
+          'folio',
+          'descripcion',
+          'concepto',
+          'monto',
+          'total',
+          'importe',
+          'abono',
+          'pago',
+          'cobro',
+          'numero',
+        ];
 
-        if (!jsonData || jsonData.length === 0) {
-          setErrorImportarExcel('La hoja de cálculo está vacía. Por favor revisa el archivo.');
+        // Buscar entre todas las hojas del libro cuál tiene los datos y encabezados
+        let selectedSheetName = workbook.SheetNames[0];
+        let bestMatrix: any[][] = [];
+        let bestHeaderIndex = 0;
+        let maxKeywordsFound = -1;
+
+        for (const sName of workbook.SheetNames) {
+          const ws = workbook.Sheets[sName];
+          if (!ws) continue;
+          const matrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          if (!matrix || matrix.length === 0) continue;
+
+          // Revisar las primeras 30 filas de cada hoja
+          for (let r = 0; r < Math.min(30, matrix.length); r++) {
+            const fila = matrix[r];
+            if (!Array.isArray(fila)) continue;
+            let count = 0;
+            for (const cell of fila) {
+              if (cell !== null && cell !== undefined) {
+                const cellStr = String(cell)
+                  .toLowerCase()
+                  .normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/[^a-z0-9]/g, '');
+                if (palabrasClave.some((p) => cellStr.includes(p))) {
+                  count++;
+                }
+              }
+            }
+            if (count > maxKeywordsFound) {
+              maxKeywordsFound = count;
+              bestHeaderIndex = r;
+              selectedSheetName = sName;
+              bestMatrix = matrix;
+            }
+          }
+        }
+
+        if (bestMatrix.length === 0) {
+          const firstWs = workbook.Sheets[workbook.SheetNames[0]];
+          bestMatrix = XLSX.utils.sheet_to_json(firstWs, { header: 1, defval: '' });
+          bestHeaderIndex = 0;
+        }
+
+        const encabezados = (bestMatrix[bestHeaderIndex] || []).map((h: any) => String(h || '').trim());
+        const filasDatos = bestMatrix.slice(bestHeaderIndex + 1);
+
+        const jsonData: Record<string, any>[] = [];
+        for (const fila of filasDatos) {
+          if (!Array.isArray(fila)) continue;
+          // Ignorar fila si todas las celdas están vacías
+          if (fila.every((c) => c === '' || c === null || c === undefined)) continue;
+
+          const obj: Record<string, any> = {};
+          encabezados.forEach((enc, colIdx) => {
+            if (enc) {
+              obj[enc] = fila[colIdx] ?? '';
+            }
+          });
+          jsonData.push(obj);
+        }
+
+        if (jsonData.length === 0) {
+          setErrorImportarExcel(
+            `La hoja "${selectedSheetName}" no contiene registros de datos después de la fila de encabezados.`
+          );
           setFilasExcelPrevia([]);
           setCargandoImportacion(false);
           return;
@@ -987,11 +1182,18 @@ export default function FacturacionCobranza() {
         const targetObra = obraDestinoImportId || obraSeleccionada.id;
         const facturasProcesadas: Invoice[] = jsonData
           .map((row, idx) => procesarFilaExcel(row, idx, targetObra))
-          .filter((f) => f.monto > 0 || f.folio);
+          .filter(
+            (f): f is Invoice =>
+              f !== null &&
+              (f.monto > 0 ||
+                Boolean(f.numeroFactura) ||
+                Boolean(f.serie) ||
+                (f.totalAbonado || 0) > 0)
+          );
 
         if (facturasProcesadas.length === 0) {
           setErrorImportarExcel(
-            'No se encontraron facturas válidas. Verifica que las columnas coincidan con las requeridas: Fecha factura, Serie, Número de factura, Descripción, Monto factura, Abono 1, etc.'
+            `No se detectaron facturas válidas en la hoja "${selectedSheetName}" (fila de encabezados detectada: #${bestHeaderIndex + 1}). Por favor verifica que las columnas correspondan a Fecha factura, Serie, Número de factura, Descripción, Monto factura, Abonos...`
           );
           setFilasExcelPrevia([]);
         } else {
@@ -1215,6 +1417,21 @@ export default function FacturacionCobranza() {
   const handleEliminarFactura = (id: string, folioEliminar: string) => {
     if (window.confirm(`¿Estás seguro de eliminar la factura "${folioEliminar}"? Esta acción no se puede deshacer.`)) {
       setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+    }
+  };
+
+  // Eliminar todas las facturas de la obra actual
+  const handleEliminarTodasFacturasObra = () => {
+    const cant = facturasDeObra.length;
+    if (cant === 0) return;
+    if (
+      window.confirm(
+        `¿Estás seguro de que deseas eliminar las ${cant} facturas registradas en "${obraSeleccionada?.nombre || 'esta obra'}"?\n\nEsta acción borrará todas estas facturas de la memoria para que puedas volver a cargarlas limpiamente desde tu archivo de Excel.`
+      )
+    ) {
+      setInvoices((prev) => prev.filter((inv) => inv.obraId !== obraSeleccionada.id));
+      setExitoForm(`Se eliminaron las ${cant} facturas correctamente.`);
+      setTimeout(() => setExitoForm(null), 5000);
     }
   };
 
@@ -2055,6 +2272,19 @@ export default function FacturacionCobranza() {
               <span>📊</span>
               <span>Exportar Excel</span>
             </button>
+
+            {/* BOTÓN BORRAR TODAS LAS FACTURAS DE ESTA OBRA */}
+            {facturasDeObra.length > 0 && (
+              <button
+                type="button"
+                onClick={handleEliminarTodasFacturasObra}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                title="Eliminar todas las facturas de esta obra para poder volver a cargarlas limpiamente"
+              >
+                <span>🗑️</span>
+                <span>Borrar Todo ({facturasDeObra.length})</span>
+              </button>
+            )}
           </div>
         </div>
 
