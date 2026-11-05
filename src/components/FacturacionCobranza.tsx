@@ -724,8 +724,14 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
   const [obraDestinoImportId, setObraDestinoImportId] = useState<string>(() => obraIdSeleccionada);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Modal para ver y editar desglose de Abonos 1 al 4 y estatus de una factura
+  // Modal para ver y editar datos completos de una factura (Folio, Descripción, Fecha, Monto) y Abonos 1 al 4
   const [facturaAbonosEditando, setFacturaAbonosEditando] = useState<Invoice | null>(null);
+  const [formSerie, setFormSerie] = useState('');
+  const [formNumeroFactura, setFormNumeroFactura] = useState('');
+  const [formFolio, setFormFolio] = useState('');
+  const [formDescripcion, setFormDescripcion] = useState('');
+  const [formFechaEmision, setFormFechaEmision] = useState('');
+  const [formMonto, setFormMonto] = useState('');
   const [formAbono1, setFormAbono1] = useState('');
   const [formFechaAbono1, setFormFechaAbono1] = useState('');
   const [formAbono2, setFormAbono2] = useState('');
@@ -1481,9 +1487,15 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     }
   };
 
-  // Abrir modal para cargar y gestionar abonos a una factura
+  // Abrir modal para editar datos completos de una factura (Folio, Concepto, Fecha, Monto) y sus abonos
   const handleAbrirAbonosModal = (inv: Invoice) => {
     setFacturaAbonosEditando(inv);
+    setFormSerie(inv.serie || '');
+    setFormNumeroFactura(inv.numeroFactura || '');
+    setFormFolio(inv.folio || '');
+    setFormDescripcion(inv.descripcion || inv.concepto || '');
+    setFormFechaEmision(inv.fechaEmision || '');
+    setFormMonto(inv.monto ? String(inv.monto) : '');
     setFormAbono1(inv.abono1 ? String(inv.abono1) : '');
     setFormFechaAbono1(inv.fechaAbono1 || '');
     setFormAbono2(inv.abono2 ? String(inv.abono2) : '');
@@ -1496,33 +1508,54 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     setFormNotasModal(inv.notas || '');
   };
 
-  // Guardar abonos y estatus modificados en la factura
+  // Guardar datos editados de la factura y abonos
   const handleGuardarAbonosModal = (e: React.FormEvent) => {
     e.preventDefault();
     if (!facturaAbonosEditando) return;
 
+    const s = formSerie.trim();
+    const num = formNumeroFactura.trim();
+    let fol = formFolio.trim();
+    if (!fol) {
+      if (s && num) fol = `${s}-${num}`;
+      else if (num) fol = num;
+      else if (s) fol = s;
+      else fol = facturaAbonosEditando.folio;
+    }
+
+    const nuevoMonto = parseExcelNumber(formMonto);
     const ab1 = parseExcelNumber(formAbono1);
     const ab2 = parseExcelNumber(formAbono2);
     const ab3 = parseExcelNumber(formAbono3);
     const ab4 = parseExcelNumber(formAbono4);
     const totalAbonado = ab1 + ab2 + ab3 + ab4;
-    const saldoPendiente = Math.max(0, facturaAbonosEditando.monto - totalAbonado);
+    const saldoPendiente = Math.max(0, nuevoMonto - totalAbonado);
 
     let estatusFinal = formEstatusModal;
     // Si el usuario tenía estatus 'Pendiente' pero el monto está totalmente cubierto:
     if (
-      facturaAbonosEditando.monto > 0 &&
-      totalAbonado >= facturaAbonosEditando.monto &&
+      nuevoMonto > 0 &&
+      totalAbonado >= nuevoMonto &&
       estatusFinal === 'Pendiente'
     ) {
       estatusFinal = 'Pagada';
     }
+
+    const desc = formDescripcion.trim() || 'Estimación de Obra';
+    const fechaEmis = formFechaEmision.trim() || facturaAbonosEditando.fechaEmision || hoyStr;
 
     setInvoices((prev) =>
       prev.map((inv) =>
         inv.id === facturaAbonosEditando.id
           ? {
               ...inv,
+              folio: fol,
+              serie: s || undefined,
+              numeroFactura: num || undefined,
+              concepto: desc,
+              descripcion: desc,
+              fechaEmision: fechaEmis,
+              monto: nuevoMonto,
               abono1: ab1,
               fechaAbono1: formFechaAbono1,
               abono2: ab2,
@@ -1540,7 +1573,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
       )
     );
 
-    setExitoForm(`¡Abonos y estatus de la factura ${facturaAbonosEditando.folio} actualizados correctamente!`);
+    setExitoForm(`¡Factura ${fol} actualizada correctamente!`);
     setFacturaAbonosEditando(null);
     setTimeout(() => setExitoForm(null), 4000);
   };
@@ -1627,6 +1660,49 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     const saldoPendiente = Math.max(0, totalFacturado - totalCobrado);
     return { totalFacturado, totalCobrado, saldoPendiente };
   }, [facturasFiltradas]);
+
+  // Conteo dinámico de facturas por estatus según los otros filtros activos (Serie, Fechas, Búsqueda)
+  const conteoEstatus = useMemo(() => {
+    const base = facturasDeObra.filter((inv) => {
+      // Filtro Serie
+      if (filtroSerie !== 'Todas') {
+        const s = (inv.serie || '').trim();
+        if (filtroSerie === '__SIN_SERIE__') {
+          if (s) return false;
+        } else {
+          if (s.toLowerCase() !== filtroSerie.trim().toLowerCase()) return false;
+        }
+      }
+
+      // Filtro Fechas
+      const fecha = (inv.fechaEmision || '').trim();
+      if (filtroFechaDesde && fecha && fecha < filtroFechaDesde) return false;
+      if (filtroFechaHasta && fecha && fecha > filtroFechaHasta) return false;
+      if ((filtroFechaDesde || filtroFechaHasta) && !fecha) return false;
+
+      // Filtro Búsqueda
+      const busqNorm = busqueda.trim().toLowerCase();
+      if (busqNorm) {
+        const coincide =
+          inv.folio.toLowerCase().includes(busqNorm) ||
+          (inv.serie && inv.serie.toLowerCase().includes(busqNorm)) ||
+          (inv.numeroFactura && inv.numeroFactura.toLowerCase().includes(busqNorm)) ||
+          inv.concepto.toLowerCase().includes(busqNorm) ||
+          (inv.descripcion && inv.descripcion.toLowerCase().includes(busqNorm)) ||
+          (inv.notas && inv.notas.toLowerCase().includes(busqNorm));
+        if (!coincide) return false;
+      }
+
+      return true;
+    });
+
+    return {
+      todos: base.length,
+      pendiente: base.filter((f) => f.estatus === 'Pendiente').length,
+      pagada: base.filter((f) => f.estatus === 'Pagada').length,
+      cancelada: base.filter((f) => f.estatus === 'Cancelada').length,
+    };
+  }, [facturasDeObra, filtroSerie, filtroFechaDesde, filtroFechaHasta, busqueda]);
 
   // Indicador de si existe algún filtro activo
   const hayFiltrosActivos = useMemo(() => {
@@ -2476,9 +2552,9 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
           </div>
         </div>
 
-        {/* PANEL DE FILTROS AVANZADOS (FECHA, SERIE, BÚSQUEDA) */}
+        {/* PANEL DE FILTROS AVANZADOS (FECHA, SERIE, ESTATUS, BÚSQUEDA) */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/25 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {/* 1. BUSCADOR */}
             <div>
               <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
@@ -2517,7 +2593,24 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
               </select>
             </div>
 
-            {/* 3. FECHA DESDE */}
+            {/* 3. FILTRO POR ESTATUS */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                ⚡ Filtrar por Estatus
+              </label>
+              <select
+                value={filtroEstatus}
+                onChange={(e) => setFiltroEstatus(e.target.value as any)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer"
+              >
+                <option value="Todos">📁 Todos ({conteoEstatus.todos})</option>
+                <option value="Pendiente">🟡 Solo Pendientes ({conteoEstatus.pendiente})</option>
+                <option value="Pagada">🟢 Solo Pagadas ({conteoEstatus.pagada})</option>
+                <option value="Cancelada">🔴 Solo Canceladas ({conteoEstatus.cancelada})</option>
+              </select>
+            </div>
+
+            {/* 4. FECHA DESDE */}
             <div>
               <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                 📅 Fecha Factura Desde
@@ -2530,7 +2623,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
               />
             </div>
 
-            {/* 4. FECHA HASTA */}
+            {/* 5. FECHA HASTA */}
             <div>
               <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
                 📅 Fecha Factura Hasta
@@ -2551,6 +2644,22 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                 <span className="font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md">
                   Filtro activo: {facturasFiltradas.length} de {facturasDeObra.length}
                 </span>
+                {filtroEstatus !== 'Todos' && (
+                  <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                    filtroEstatus === 'Pendiente' ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' :
+                    filtroEstatus === 'Pagada' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' :
+                    'bg-red-100 dark:bg-red-950/60 text-red-800 dark:text-red-300'
+                  }`}>
+                    {filtroEstatus === 'Pendiente' && '🟡 Pendientes'}
+                    {filtroEstatus === 'Pagada' && '🟢 Pagadas'}
+                    {filtroEstatus === 'Cancelada' && '🔴 Canceladas'}
+                  </span>
+                )}
+                {filtroSerie !== 'Todas' && (
+                  <span className="bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                    Serie: {filtroSerie === '__SIN_SERIE__' ? 'Sin Serie' : filtroSerie}
+                  </span>
+                )}
                 <span className="text-gray-300 dark:text-gray-700">|</span>
                 <span>Facturado: <strong className="text-gray-900 dark:text-white">{formatPesos(totalesFiltrados.totalFacturado)}</strong></span>
                 <span className="text-gray-300 dark:text-gray-700">|</span>
@@ -2575,8 +2684,12 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
           {(['Todos', 'Pendiente', 'Pagada', 'Cancelada'] as const).map((est) => {
             const count =
               est === 'Todos'
-                ? facturasDeObra.length
-                : facturasDeObra.filter((f) => f.estatus === est).length;
+                ? conteoEstatus.todos
+                : est === 'Pendiente'
+                ? conteoEstatus.pendiente
+                : est === 'Pagada'
+                ? conteoEstatus.pagada
+                : conteoEstatus.cancelada;
             const activo = filtroEstatus === est;
             return (
               <button
@@ -2595,7 +2708,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                   {est === 'Pagada' && '🟢'}
                   {est === 'Cancelada' && '🔴'}
                 </span>
-                <span>{est === 'Todos' ? 'Todas' : est}</span>
+                <span>{est === 'Todos' ? 'Todas' : est === 'Pendiente' ? 'Pendientes' : est === 'Pagada' ? 'Pagadas' : 'Canceladas'}</span>
                 <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                   activo ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                 }`}>
@@ -2648,10 +2761,15 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                       key={inv.id}
                       className="hover:bg-blue-50/40 dark:hover:bg-gray-800/50 transition-colors"
                     >
-                      {/* FOLIO Y SERIE */}
-                      <td className="py-3 px-4">
-                        <span className="font-black text-gray-900 dark:text-white block">
-                          {inv.folio}
+                      {/* FOLIO Y SERIE (CLICK PARA EDITAR) */}
+                      <td
+                        className="py-3 px-4 cursor-pointer group"
+                        onClick={() => handleAbrirAbonosModal(inv)}
+                        title="Haz clic para editar los datos de esta factura"
+                      >
+                        <span className="font-black text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-1">
+                          <span>{inv.folio}</span>
+                          <span className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500">✏️</span>
                         </span>
                         {(inv.serie || inv.numeroFactura) && (
                           <span className="text-[10px] text-gray-500 dark:text-gray-400">
@@ -2663,8 +2781,12 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                       </td>
 
                       {/* CONCEPTO */}
-                      <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[11px] ${
+                      <td
+                        className="py-3 px-4 cursor-pointer"
+                        onClick={() => handleAbrirAbonosModal(inv)}
+                        title="Haz clic para editar los datos de esta factura"
+                      >
+                        <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[11px] hover:ring-2 hover:ring-blue-400/50 transition-all ${
                           inv.concepto === 'Anticipo'
                             ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
                             : inv.concepto === 'Estimación'
@@ -2741,9 +2863,20 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                         {inv.notas || '—'}
                       </td>
 
-                      {/* BOTONES RÁPIDOS DE CAMBIO DE ESTATUS */}
+                      {/* BOTONES RÁPIDOS: EDITAR, CAMBIO DE ESTATUS Y ELIMINAR */}
                       <td className="py-3 px-4 whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1.5">
+                          {/* BOTÓN EDITAR FACTURA */}
+                          <button
+                            type="button"
+                            onClick={() => handleAbrirAbonosModal(inv)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors shadow-xs flex items-center gap-1 cursor-pointer"
+                            title="Editar datos de la factura (Folio, Concepto, Fecha, Monto) y Abonos"
+                          >
+                            <span>✏️</span>
+                            <span>Editar</span>
+                          </button>
+
                           {inv.estatus !== 'Pagada' && (
                             <button
                               type="button"
@@ -3326,7 +3459,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: CARGAR Y EDITAR ABONOS DE LA FACTURA */}
+      {/* MODAL: EDITAR DATOS DE LA FACTURA Y ABONOS */}
       {/* ======================================================== */}
       {facturaAbonosEditando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
@@ -3336,17 +3469,14 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
             <div className="p-4 sm:p-5 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/30 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xl shadow-sm">
-                  💳
+                  ✏️
                 </div>
                 <div>
                   <h3 className="text-base sm:text-lg font-black text-gray-900 dark:text-white leading-tight">
-                    Cargar Abonos — Folio: {facturaAbonosEditando.folio}
+                    Editar Factura — {formFolio || facturaAbonosEditando.folio}
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                    {facturaAbonosEditando.descripcion || facturaAbonosEditando.concepto} | Monto Factura:{' '}
-                    <strong className="text-gray-800 dark:text-gray-200 font-black">
-                      {formatPesos(facturaAbonosEditando.monto)}
-                    </strong>
+                    Modifica folio, concepto, fecha, monto, abonos y estatus de cobranza
                   </p>
                 </div>
               </div>
@@ -3355,146 +3485,265 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                 type="button"
                 onClick={() => setFacturaAbonosEditando(null)}
                 className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                title="Cerrar modal"
               >
                 ✕
               </button>
             </div>
 
-            {/* Formulario de Carga y Edición de Abonos */}
+            {/* Formulario de Edición Completa */}
             <form onSubmit={handleGuardarAbonosModal} className="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs">
               
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                Registra o modifica los abonos recibidos con su fecha de cobro correspondiente. Los saldos del Dashboard se actualizarán automáticamente.
-              </p>
+              {/* SECCIÓN 1: DATOS GENERALES DE LA FACTURA */}
+              <div className="bg-gray-50 dark:bg-gray-800/60 p-4 rounded-xl border border-gray-200 dark:border-gray-700 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase tracking-wide text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                    <span>📄</span> Datos de la Factura
+                  </span>
+                  <span className="text-[10px] text-gray-400">Campos obligatorios *</span>
+                </div>
 
-              {/* 4 Tarjetas Editables de Abonos */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* ABONO 1 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
-                      Abono 1 ($ MXN)
-                    </span>
-                    <span className="text-[10px] text-gray-400">Primer cobro</span>
-                  </div>
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Serie
+                    </label>
                     <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formAbono1}
-                      onChange={(e) => setFormAbono1(e.target.value)}
-                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      type="text"
+                      placeholder="Ej. CSCH, RR, GSCM"
+                      value={formSerie}
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setFormSerie(val);
+                        if (val && formNumeroFactura) {
+                          setFormFolio(`${val}-${formNumeroFactura}`);
+                        } else if (!val && formNumeroFactura) {
+                          setFormFolio(formNumeroFactura);
+                        }
+                      }}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none uppercase"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 1:</label>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Número de Factura
+                    </label>
                     <input
-                      type="date"
-                      value={formFechaAbono1}
-                      onChange={(e) => setFormFechaAbono1(e.target.value)}
-                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      type="text"
+                      placeholder="Ej. 1025"
+                      value={formNumeroFactura}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormNumeroFactura(val);
+                        if (formSerie && val) {
+                          setFormFolio(`${formSerie}-${val}`);
+                        } else if (!formSerie && val) {
+                          setFormFolio(val);
+                        }
+                      }}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Folio / Clave *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej. CSCH-1025"
+                      value={formFolio}
+                      onChange={(e) => setFormFolio(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
                 </div>
 
-                {/* ABONO 2 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
-                      Abono 2 ($ MXN)
-                    </span>
-                    <span className="text-[10px] text-gray-400">Segundo cobro</span>
-                  </div>
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formAbono2}
-                      onChange={(e) => setFormAbono2(e.target.value)}
-                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 2:</label>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Fecha de Emisión *
+                    </label>
                     <input
                       type="date"
-                      value={formFechaAbono2}
-                      onChange={(e) => setFormFechaAbono2(e.target.value)}
-                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      required
+                      value={formFechaEmision}
+                      onChange={(e) => setFormFechaEmision(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Monto Factura ($ MXN) *
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        placeholder="0.00"
+                        value={formMonto}
+                        onChange={(e) => setFormMonto(e.target.value)}
+                        className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                {/* ABONO 3 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
-                      Abono 3 ($ MXN)
-                    </span>
-                    <span className="text-[10px] text-gray-400">Tercer cobro</span>
-                  </div>
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formAbono3}
-                      onChange={(e) => setFormAbono3(e.target.value)}
-                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 3:</label>
-                    <input
-                      type="date"
-                      value={formFechaAbono3}
-                      onChange={(e) => setFormFechaAbono3(e.target.value)}
-                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Descripción / Concepto *
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    placeholder="Descripción detallada de la factura..."
+                    value={formDescripcion}
+                    onChange={(e) => setFormDescripcion(e.target.value)}
+                    className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-medium text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
                 </div>
+              </div>
 
-                {/* ABONO 4 */}
-                <div className="bg-gray-50 dark:bg-gray-800/70 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
-                      Abono 4 ($ MXN)
-                    </span>
-                    <span className="text-[10px] text-gray-400">Cuarto cobro / Liquidación</span>
+              {/* SECCIÓN 2: 4 TARJETAS DE ABONOS */}
+              <div className="space-y-2">
+                <span className="text-xs font-black uppercase tracking-wide text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <span>💳</span> Abonos Registrados (1 al 4)
+                </span>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* ABONO 1 */}
+                  <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                        Abono 1 ($ MXN)
+                      </span>
+                      <span className="text-[10px] text-gray-400">Primer cobro</span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formAbono1}
+                        onChange={(e) => setFormAbono1(e.target.value)}
+                        className="w-full p-1.5 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 1:</label>
+                      <input
+                        type="date"
+                        value={formFechaAbono1}
+                        onChange={(e) => setFormFechaAbono1(e.target.value)}
+                        className="w-full p-1 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formAbono4}
-                      onChange={(e) => setFormAbono4(e.target.value)}
-                      className="w-full p-2 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
+
+                  {/* ABONO 2 */}
+                  <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                        Abono 2 ($ MXN)
+                      </span>
+                      <span className="text-[10px] text-gray-400">Segundo cobro</span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formAbono2}
+                        onChange={(e) => setFormAbono2(e.target.value)}
+                        className="w-full p-1.5 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 2:</label>
+                      <input
+                        type="date"
+                        value={formFechaAbono2}
+                        onChange={(e) => setFormFechaAbono2(e.target.value)}
+                        className="w-full p-1 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 4:</label>
-                    <input
-                      type="date"
-                      value={formFechaAbono4}
-                      onChange={(e) => setFormFechaAbono4(e.target.value)}
-                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                    />
+
+                  {/* ABONO 3 */}
+                  <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                        Abono 3 ($ MXN)
+                      </span>
+                      <span className="text-[10px] text-gray-400">Tercer cobro</span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formAbono3}
+                        onChange={(e) => setFormAbono3(e.target.value)}
+                        className="w-full p-1.5 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 3:</label>
+                      <input
+                        type="date"
+                        value={formFechaAbono3}
+                        onChange={(e) => setFormFechaAbono3(e.target.value)}
+                        className="w-full p-1 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* ABONO 4 */}
+                  <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400">
+                        Abono 4 ($ MXN)
+                      </span>
+                      <span className="text-[10px] text-gray-400">Cuarto cobro / Liquidación</span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formAbono4}
+                        onChange={(e) => setFormAbono4(e.target.value)}
+                        className="w-full p-1.5 pl-6 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs font-black text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 4:</label>
+                      <input
+                        type="date"
+                        value={formFechaAbono4}
+                        onChange={(e) => setFormFechaAbono4(e.target.value)}
+                        className="w-full p-1 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* CAMBIO MANUAL DE ESTATUS Y NOTAS */}
+              {/* SECCIÓN 3: CAMBIO DE ESTATUS Y NOTAS */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-gray-50 dark:bg-gray-800/50 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700">
                 <div>
                   <label className="block text-xs font-black text-gray-800 dark:text-gray-200 mb-1">
@@ -3525,21 +3774,22 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                 </div>
               </div>
 
-              {/* RESUMEN FINANCIERO EN VIVO */}
+              {/* SECCIÓN 4: RESUMEN FINANCIERO EN VIVO */}
               {(() => {
+                const montoActual = parseExcelNumber(formMonto);
                 const a1 = parseExcelNumber(formAbono1);
                 const a2 = parseExcelNumber(formAbono2);
                 const a3 = parseExcelNumber(formAbono3);
                 const a4 = parseExcelNumber(formAbono4);
                 const tot = a1 + a2 + a3 + a4;
-                const saldo = Math.max(0, facturaAbonosEditando.monto - tot);
-                const cubierto = tot >= facturaAbonosEditando.monto && facturaAbonosEditando.monto > 0;
+                const saldo = Math.max(0, montoActual - tot);
+                const cubierto = tot >= montoActual && montoActual > 0;
 
                 return (
                   <div className="bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-teal-50/60 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-teal-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/60 space-y-2">
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-gray-600 dark:text-gray-300 font-semibold">Monto Total Factura:</span>
-                      <span className="font-black text-gray-900 dark:text-white">{formatPesos(facturaAbonosEditando.monto)}</span>
+                      <span className="font-black text-gray-900 dark:text-white">{formatPesos(montoActual)}</span>
                     </div>
 
                     <div className="flex justify-between items-center text-xs text-emerald-700 dark:text-emerald-400 font-bold">
@@ -3556,7 +3806,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
 
                     {cubierto && (
                       <div className="text-[10px] bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 p-1.5 rounded-lg text-center font-bold">
-                        ✓ El monto total está cubierto. Al guardar se marcará automáticamente como PAGADA.
+                        ✓ El monto total está cubierto por los abonos. Al guardar se marcará automáticamente como PAGADA.
                       </div>
                     )}
                   </div>
@@ -3577,7 +3827,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
                   className="bg-blue-600 hover:bg-blue-700 text-white font-black px-6 py-2.5 rounded-xl text-xs transition-colors shadow-md flex items-center gap-2 cursor-pointer"
                 >
                   <span>💾</span>
-                  <span>Guardar Abonos y Cambios</span>
+                  <span>Guardar Cambios</span>
                 </button>
               </div>
             </form>
