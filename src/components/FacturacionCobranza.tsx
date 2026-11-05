@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import type { Obra } from '../types';
 
 // ============================================================================
@@ -488,10 +489,36 @@ const DEFAULT_MACHINERY_RECORDS: MachineryDailyRecord[] = [
   },
 ];
 
+export interface FacturacionCobranzaProps {
+  usuarioEmail?: string;
+}
+
 // ============================================================================
 // COMPONENTE PRINCIPAL
 // ============================================================================
-export default function FacturacionCobranza() {
+export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranzaProps = {}) {
+  // Administrador maestro exclusivo para funciones críticas (Borrar Todo)
+  const ADMIN_MAESTRO_EMAIL = 'jrodolforubalcava@gmail.com';
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(
+    () => (usuarioEmail || auth.currentUser?.email || '').trim().toLowerCase()
+  );
+
+  useEffect(() => {
+    if (usuarioEmail) {
+      setCurrentUserEmail(usuarioEmail.trim().toLowerCase());
+    }
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user?.email) {
+        setCurrentUserEmail(user.email.trim().toLowerCase());
+      }
+    });
+    return () => unsub();
+  }, [usuarioEmail]);
+
+  const esAdminMaestro = useMemo(() => {
+    const email = (currentUserEmail || '').trim().toLowerCase();
+    return email === ADMIN_MAESTRO_EMAIL.toLowerCase();
+  }, [currentUserEmail]);
   // --------------------------------------------------------------------------
   // 1. CARGA Y PERSISTENCIA DE OBRAS
   // --------------------------------------------------------------------------
@@ -742,6 +769,9 @@ export default function FacturacionCobranza() {
 
   // Filtros de la tabla de facturas
   const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | EstatusFactura>('Todos');
+  const [filtroSerie, setFiltroSerie] = useState<string>('Todas');
+  const [filtroFechaDesde, setFiltroFechaDesde] = useState<string>('');
+  const [filtroFechaHasta, setFiltroFechaHasta] = useState<string>('');
   const [busqueda, setBusqueda] = useState('');
 
   // --------------------------------------------------------------------------
@@ -1432,8 +1462,12 @@ export default function FacturacionCobranza() {
     }
   };
 
-  // Eliminar todas las facturas de la obra actual
+  // Eliminar todas las facturas de la obra actual (Exclusivo Administrador Maestro)
   const handleEliminarTodasFacturasObra = () => {
+    if (!esAdminMaestro) {
+      alert('Acción restringida. Solo el usuario administrador maestro (jrodolforubalcava@gmail.com) puede eliminar todas las facturas.');
+      return;
+    }
     const cant = facturasDeObra.length;
     if (cant === 0) return;
     if (
@@ -1512,20 +1546,107 @@ export default function FacturacionCobranza() {
   };
 
   // --------------------------------------------------------------------------
-  // 8. FACTURAS FILTRADAS PARA LA TABLA
+  // 8. SERIES DISPONIBLES Y FACTURAS FILTRADAS
   // --------------------------------------------------------------------------
+
+  // Series únicas presentes en las facturas de la obra actual
+  const seriesDisponibles = useMemo(() => {
+    const mapa = new Map<string, number>();
+    let sinSerieCount = 0;
+    facturasDeObra.forEach((f) => {
+      const s = (f.serie || '').trim();
+      if (s) {
+        mapa.set(s, (mapa.get(s) || 0) + 1);
+      } else {
+        sinSerieCount++;
+      }
+    });
+    return {
+      series: Array.from(mapa.entries()).sort((a, b) => a[0].localeCompare(b[0])),
+      sinSerieCount,
+    };
+  }, [facturasDeObra]);
+
+  // Facturas filtradas combinando Serie, Rango de Fecha, Estatus y Búsqueda
   const facturasFiltradas = useMemo(() => {
     return facturasDeObra.filter((inv) => {
-      const coincideEstatus = filtroEstatus === 'Todos' || inv.estatus === filtroEstatus;
+      // 1. Filtro por Estatus
+      if (filtroEstatus !== 'Todos' && inv.estatus !== filtroEstatus) {
+        return false;
+      }
+
+      // 2. Filtro por Serie
+      if (filtroSerie !== 'Todas') {
+        const s = (inv.serie || '').trim();
+        if (filtroSerie === '__SIN_SERIE__') {
+          if (s) return false;
+        } else {
+          if (s.toLowerCase() !== filtroSerie.trim().toLowerCase()) return false;
+        }
+      }
+
+      // 3. Filtro por Rango de Fechas (YYYY-MM-DD)
+      const fecha = (inv.fechaEmision || '').trim();
+      if (filtroFechaDesde && fecha) {
+        if (fecha < filtroFechaDesde) return false;
+      }
+      if (filtroFechaHasta && fecha) {
+        if (fecha > filtroFechaHasta) return false;
+      }
+      if ((filtroFechaDesde || filtroFechaHasta) && !fecha) {
+        return false;
+      }
+
+      // 4. Filtro por Búsqueda de texto
       const busqNorm = busqueda.trim().toLowerCase();
-      const coincideBusq =
-        !busqNorm ||
-        inv.folio.toLowerCase().includes(busqNorm) ||
-        inv.concepto.toLowerCase().includes(busqNorm) ||
-        (inv.notas && inv.notas.toLowerCase().includes(busqNorm));
-      return coincideEstatus && coincideBusq;
+      if (busqNorm) {
+        const coincide =
+          inv.folio.toLowerCase().includes(busqNorm) ||
+          (inv.serie && inv.serie.toLowerCase().includes(busqNorm)) ||
+          (inv.numeroFactura && inv.numeroFactura.toLowerCase().includes(busqNorm)) ||
+          inv.concepto.toLowerCase().includes(busqNorm) ||
+          (inv.descripcion && inv.descripcion.toLowerCase().includes(busqNorm)) ||
+          (inv.notas && inv.notas.toLowerCase().includes(busqNorm));
+        if (!coincide) return false;
+      }
+
+      return true;
     });
-  }, [facturasDeObra, filtroEstatus, busqueda]);
+  }, [facturasDeObra, filtroEstatus, filtroSerie, filtroFechaDesde, filtroFechaHasta, busqueda]);
+
+  // Totales financieros calculados sobre las facturas actualmente filtradas
+  const totalesFiltrados = useMemo(() => {
+    const validas = facturasFiltradas.filter((f) => f.estatus !== 'Cancelada');
+    const totalFacturado = validas.reduce((sum, f) => sum + (Number(f.monto) || 0), 0);
+    const totalCobrado = validas.reduce((sum, f) => {
+      const abonado = Number(f.totalAbonado) || 0;
+      if (abonado > 0) return sum + abonado;
+      if (f.estatus === 'Pagada') return sum + (Number(f.monto) || 0);
+      return sum;
+    }, 0);
+    const saldoPendiente = Math.max(0, totalFacturado - totalCobrado);
+    return { totalFacturado, totalCobrado, saldoPendiente };
+  }, [facturasFiltradas]);
+
+  // Indicador de si existe algún filtro activo
+  const hayFiltrosActivos = useMemo(() => {
+    return (
+      filtroEstatus !== 'Todos' ||
+      filtroSerie !== 'Todas' ||
+      filtroFechaDesde !== '' ||
+      filtroFechaHasta !== '' ||
+      busqueda.trim() !== ''
+    );
+  }, [filtroEstatus, filtroSerie, filtroFechaDesde, filtroFechaHasta, busqueda]);
+
+  // Limpiar todos los filtros aplicados
+  const handleLimpiarFiltros = () => {
+    setFiltroEstatus('Todos');
+    setFiltroSerie('Todas');
+    setFiltroFechaDesde('');
+    setFiltroFechaHasta('');
+    setBusqueda('');
+  };
 
   // Formateador de moneda
   const formatPesos = (val: number) => {
@@ -2298,30 +2419,21 @@ export default function FacturacionCobranza() {
       {/* TABLA DE CONTROL DE FACTURAS Y ESTATUS DE COBRANZA */}
       {/* ====================================================================== */}
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
-        {/* BARRA SUPERIOR DE LA TABLA (FILTROS Y BÚSQUEDA) */}
+        {/* BARRA SUPERIOR DE LA TABLA (TÍTULO Y ACCIONES PRINCIPALES) */}
         <div className="p-4 sm:p-5 border-b border-gray-200 dark:border-gray-800 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gray-50/50 dark:bg-gray-800/40">
           <div>
             <h3 className="text-base font-black text-gray-900 dark:text-white flex items-center gap-2">
               <span>📋</span> Control de Facturas Registradas
-              <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-bold px-2 py-0.5 rounded-full">
-                {facturasFiltradas.length}
+              <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-bold px-2.5 py-0.5 rounded-full">
+                {facturasFiltradas.length}{facturasFiltradas.length !== facturasDeObra.length ? ` de ${facturasDeObra.length}` : ''}
               </span>
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Modifica el estatus con un clic para actualizar automáticamente los saldos del Dashboard.
+              Filtra por fecha, serie o estatus, y gestiona abonos o cambios de estatus con un clic.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* BUSCADOR */}
-            <input
-              type="text"
-              placeholder="Buscar por folio o concepto..."
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              className="p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors w-full sm:w-56"
-            />
-
+          <div className="flex flex-wrap items-center gap-2">
             {/* BOTÓN CARGAR DESDE EXCEL */}
             <button
               type="button"
@@ -2349,19 +2461,113 @@ export default function FacturacionCobranza() {
               <span>Exportar Excel</span>
             </button>
 
-            {/* BOTÓN BORRAR TODAS LAS FACTURAS DE ESTA OBRA */}
-            {facturasDeObra.length > 0 && (
+            {/* BOTÓN BORRAR TODAS LAS FACTURAS DE ESTA OBRA (EXCLUSIVO ADMINISTRADOR MAESTRO) */}
+            {esAdminMaestro && facturasDeObra.length > 0 && (
               <button
                 type="button"
                 onClick={handleEliminarTodasFacturasObra}
                 className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-                title="Eliminar todas las facturas de esta obra para poder volver a cargarlas limpiamente"
+                title="Eliminar todas las facturas de esta obra (Solo Administrador Maestro)"
               >
                 <span>🗑️</span>
                 <span>Borrar Todo ({facturasDeObra.length})</span>
               </button>
             )}
           </div>
+        </div>
+
+        {/* PANEL DE FILTROS AVANZADOS (FECHA, SERIE, BÚSQUEDA) */}
+        <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/25 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* 1. BUSCADOR */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                🔍 Buscar por Folio / Descripción
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. RR-3001, GSCM, San Isidro..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+              />
+            </div>
+
+            {/* 2. FILTRO POR SERIE */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                🏷️ Filtrar por Serie
+              </label>
+              <select
+                value={filtroSerie}
+                onChange={(e) => setFiltroSerie(e.target.value)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer"
+              >
+                <option value="Todas">Todas las Series ({facturasDeObra.length})</option>
+                {seriesDisponibles.series.map(([serieNombre, count]) => (
+                  <option key={serieNombre} value={serieNombre}>
+                    Serie {serieNombre} ({count})
+                  </option>
+                ))}
+                {seriesDisponibles.sinSerieCount > 0 && (
+                  <option value="__SIN_SERIE__">
+                    Sin Serie ({seriesDisponibles.sinSerieCount})
+                  </option>
+                )}
+              </select>
+            </div>
+
+            {/* 3. FECHA DESDE */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                📅 Fecha Factura Desde
+              </label>
+              <input
+                type="date"
+                value={filtroFechaDesde}
+                onChange={(e) => setFiltroFechaDesde(e.target.value)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer"
+              />
+            </div>
+
+            {/* 4. FECHA HASTA */}
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                📅 Fecha Factura Hasta
+              </label>
+              <input
+                type="date"
+                value={filtroFechaHasta}
+                onChange={(e) => setFiltroFechaHasta(e.target.value)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* BARRA DE RESUMEN Y BOTÓN LIMPIAR FILTROS */}
+          {hayFiltrosActivos && (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-200 dark:border-gray-700/60 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-gray-600 dark:text-gray-300">
+                <span className="font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md">
+                  Filtro activo: {facturasFiltradas.length} de {facturasDeObra.length}
+                </span>
+                <span className="text-gray-300 dark:text-gray-700">|</span>
+                <span>Facturado: <strong className="text-gray-900 dark:text-white">{formatPesos(totalesFiltrados.totalFacturado)}</strong></span>
+                <span className="text-gray-300 dark:text-gray-700">|</span>
+                <span className="text-emerald-600 dark:text-emerald-400">Cobrado: <strong>{formatPesos(totalesFiltrados.totalCobrado)}</strong></span>
+                <span className="text-gray-300 dark:text-gray-700">|</span>
+                <span className="text-red-500 dark:text-red-400">Saldo: <strong>{formatPesos(totalesFiltrados.saldoPendiente)}</strong></span>
+              </div>
+              <button
+                type="button"
+                onClick={handleLimpiarFiltros}
+                className="bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold px-3 py-1 rounded-lg text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <span>✕</span>
+                <span>Limpiar Filtros</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* PESTAÑAS DE FILTRO RÁPIDO POR ESTATUS */}
@@ -2591,19 +2797,29 @@ export default function FacturacionCobranza() {
 
         {/* PIE DE TABLA CON TOTALES FILTRADOS */}
         {facturasFiltradas.length > 0 && (
-          <div className="p-3 bg-gray-50 dark:bg-gray-800/60 border-t border-gray-200 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="p-3.5 bg-gray-50 dark:bg-gray-800/60 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <span className="text-gray-500 dark:text-gray-400 font-medium">
-              Mostrando {facturasFiltradas.length} de {facturasDeObra.length} factura(s) de esta obra.
+              Mostrando <strong className="text-gray-800 dark:text-gray-200">{facturasFiltradas.length}</strong> de <strong className="text-gray-800 dark:text-gray-200">{facturasDeObra.length}</strong> factura(s) de esta obra.
             </span>
-            <div className="flex items-center gap-2 font-bold text-gray-700 dark:text-gray-300">
-              <span>Suma Subtotal Filtrada:</span>
-              <span className="text-sm font-black text-blue-600 dark:text-blue-400">
-                {formatPesos(
-                  facturasFiltradas
-                    .filter((f) => f.estatus !== 'Cancelada')
-                    .reduce((sum, f) => sum + (Number(f.monto) || 0), 0)
-                )}
-              </span>
+            <div className="flex flex-wrap items-center gap-4 font-bold text-gray-700 dark:text-gray-300">
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-500">Monto Facturado:</span>
+                <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+                  {formatPesos(totalesFiltrados.totalFacturado)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-500">Total Cobrado:</span>
+                <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                  {formatPesos(totalesFiltrados.totalCobrado)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-500">Saldo Pendiente:</span>
+                <span className={`text-sm font-black ${totalesFiltrados.saldoPendiente > 0 ? 'text-red-500 dark:text-red-400' : 'text-gray-400'}`}>
+                  {formatPesos(totalesFiltrados.saldoPendiente)}
+                </span>
+              </div>
             </div>
           </div>
         )}

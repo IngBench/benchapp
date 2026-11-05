@@ -449,7 +449,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto w-full">
           {activeView === 'obras' && <Obras />}
           {activeView === 'presupuestos' && <Presupuestos />}
-          {activeView === 'facturacion' && <FacturacionCobranza />}
+          {activeView === 'facturacion' && <FacturacionCobranza usuarioEmail={usuarioActivo?.email || undefined} />}
           {activeView === 'almacen' && <Inventario />}
           {activeView === 'catalogo' && <ModelosHerreria />}
           {activeView === 'fabricacion' && <DestajosTaller />}
