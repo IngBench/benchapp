@@ -434,38 +434,7 @@ const DEFAULT_OBRAS: ObraItem[] = [
   },
 ];
 
-const DEFAULT_INVOICES: Invoice[] = [
-  {
-    id: 'inv-1',
-    folio: 'FAC-0101',
-    obraId: 'obra-1',
-    concepto: 'Anticipo',
-    fechaEmision: '2026-10-15',
-    monto: 255000,
-    estatus: 'Pagada',
-    notas: 'Anticipo del 30% pactado en contrato',
-  },
-  {
-    id: 'inv-2',
-    folio: 'FAC-0108',
-    obraId: 'obra-1',
-    concepto: 'Estimación',
-    fechaEmision: '2026-11-01',
-    monto: 180000,
-    estatus: 'Pendiente',
-    notas: 'Estimación No. 1 avance herrería y montajes',
-  },
-  {
-    id: 'inv-3',
-    folio: 'FAC-0095',
-    obraId: 'obra-2',
-    concepto: 'Anticipo',
-    fechaEmision: '2026-10-20',
-    monto: 126000,
-    estatus: 'Pagada',
-    notas: 'Anticipo 30% según contrato',
-  },
-];
+const DEFAULT_INVOICES: Invoice[] = [];
 
 const DEFAULT_MACHINERY_LIST: MachineryItem[] = [
   { id: 'mach-1', numero: 1, name: 'Máquina 1 - CATERPILLAR 426F2', marca: 'CATERPILLAR', modelo: '426F2', type: 'Retroexcavadora' },
@@ -1343,7 +1312,7 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
   };
 
   // Confirmar importación a la base de datos
-  const handleConfirmarImportacionExcel = () => {
+  const handleConfirmarImportacionExcel = async () => {
     if (filasExcelPrevia.length === 0) {
       setErrorImportarExcel('No hay facturas válidas para importar.');
       return;
@@ -1357,30 +1326,46 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
       obraId: targetObraId,
     }));
 
-    if (modoImportacion === 'reemplazar') {
-      // Reemplaza las facturas existentes de esta obra
-      setInvoices((prev) => [
-        ...facturasListas,
-        ...prev.filter((inv) => inv.obraId !== targetObraId),
-      ]);
-    } else {
-      // Agrega a las existentes
-      setInvoices((prev) => [...facturasListas, ...prev]);
+    setCargandoImportacion(true);
+    try {
+      if (modoImportacion === 'reemplazar') {
+        const facturasViejas = invoices.filter((inv) => inv.obraId === targetObraId);
+        if (facturasViejas.length > 0) {
+          const CHUNK_SIZE = 400;
+          for (let i = 0; i < facturasViejas.length; i += CHUNK_SIZE) {
+            const chunk = facturasViejas.slice(i, i + CHUNK_SIZE);
+            const batchDel = writeBatch(db);
+            chunk.forEach((inv) => {
+              batchDel.delete(doc(db, 'facturas_cobranza', inv.id));
+            });
+            await batchDel.commit();
+          }
+        }
+        setInvoices((prev) => [
+          ...facturasListas,
+          ...prev.filter((inv) => inv.obraId !== targetObraId),
+        ]);
+      } else {
+        setInvoices((prev) => [...facturasListas, ...prev]);
+      }
+
+      // Sincronizar en la nube (Firestore)
+      await subirFacturasAFirestore(facturasListas);
+
+      setObraIdSeleccionada(targetObraId);
+      setObraDestinoFacturaId(targetObraId);
+
+      setExitoForm(`¡Se importaron y guardaron en la nube ${facturasListas.length} facturas exitosamente! Ahora están disponibles en todas las computadoras.`);
+      setModalImportarExcelOpen(false);
+      setArchivoExcelSeleccionado(null);
+      setFilasExcelPrevia([]);
+      setTimeout(() => setExitoForm(null), 6000);
+    } catch (err: any) {
+      console.error('Error subiendo facturas importadas a Firestore:', err);
+      setErrorImportarExcel('Error al guardar en la nube: ' + (err.message || 'Intente nuevamente.'));
+    } finally {
+      setCargandoImportacion(false);
     }
-
-    // Sincronizar en la nube (Firestore)
-    subirFacturasAFirestore(facturasListas).catch((err) =>
-      console.warn('Error subiendo facturas importadas a Firestore:', err)
-    );
-
-    setObraIdSeleccionada(targetObraId);
-    setObraDestinoFacturaId(targetObraId);
-
-    setExitoForm(`¡Se importaron exitosamente ${facturasListas.length} facturas desde Excel para esta obra!`);
-    setModalImportarExcelOpen(false);
-    setArchivoExcelSeleccionado(null);
-    setFilasExcelPrevia([]);
-    setTimeout(() => setExitoForm(null), 5000);
   };
 
   // Descargar plantilla Excel oficial con las columnas exactas solicitadas
