@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { auth, db } from '../firebase';
@@ -310,6 +310,32 @@ export const procesarFilaExcel = (row: Record<string, any>, index: number, obraI
   };
 };
 
+// Limpia campos undefined para que Firebase Firestore los acepte sin error
+export const limpiarParaFirestore = (obj: Record<string, any>): Record<string, any> => {
+  const limpio: Record<string, any> = {};
+  Object.entries(obj).forEach(([key, val]) => {
+    if (val !== undefined) {
+      limpio[key] = val;
+    }
+  });
+  return limpio;
+};
+
+// Sube lotes de facturas a Firebase Firestore en chunks de máximo 400 documentos
+export const subirFacturasAFirestore = async (lista: Invoice[]) => {
+  if (!lista || lista.length === 0) return;
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < lista.length; i += CHUNK_SIZE) {
+    const chunk = lista.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach((inv) => {
+      const docRef = doc(db, 'facturas_cobranza', inv.id);
+      batch.set(docRef, limpiarParaFirestore(inv), { merge: true });
+    });
+    await batch.commit();
+  }
+};
+
 export interface ObraItem {
   id: string;
   nombre: string;
@@ -562,24 +588,80 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
   }, [obras, obraIdSeleccionada]);
 
   // --------------------------------------------------------------------------
-  // 2. CARGA Y PERSISTENCIA DE FACTURAS (invoices_db)
+  // 2. CARGA Y PERSISTENCIA DE FACTURAS (invoices_db + SINCRONIZACIÓN FIRESTORE)
   // --------------------------------------------------------------------------
   const [invoices, setInvoices] = useState<Invoice[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.INVOICES);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (err) {
       console.warn('Error leyendo invoices_db de LocalStorage:', err);
     }
-    // Si no existía, inicializamos con datos de ejemplo y los guardamos
-    try {
-      localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(DEFAULT_INVOICES));
-    } catch {}
     return DEFAULT_INVOICES;
   });
+
+  const [sincronizandoNube, setSincronizandoNube] = useState(false);
+  const autoMigradoRef = useRef(false);
+
+  // Sincronización en tiempo real con Firestore para facturas
+  useEffect(() => {
+    const unsubFacturas = onSnapshot(
+      collection(db, 'facturas_cobranza'),
+      async (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudInvoices = snapshot.docs.map((docSnap) => docSnap.data() as Invoice);
+          setInvoices(cloudInvoices);
+          try {
+            localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(cloudInvoices));
+          } catch {}
+        } else {
+          // Si Firestore está vacío, migrar automáticamente las facturas que están en LocalStorage de este equipo
+          const stored = localStorage.getItem(STORAGE_KEYS.INVOICES);
+          if (stored && !autoMigradoRef.current) {
+            autoMigradoRef.current = true;
+            try {
+              const parsed: Invoice[] = JSON.parse(stored);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const tieneFacturasReales =
+                  parsed.length > DEFAULT_INVOICES.length ||
+                  parsed.some((p) => p.numeroFactura || p.serie || (p.totalAbonado || 0) > 0);
+                if (tieneFacturasReales) {
+                  setSincronizandoNube(true);
+                  await subirFacturasAFirestore(parsed);
+                  setSincronizandoNube(false);
+                }
+              }
+            } catch (err) {
+              console.error('Error auto-migrando facturas locales a Firestore:', err);
+              setSincronizandoNube(false);
+            }
+          }
+        }
+      },
+      (err) => console.warn('Firestore facturas_cobranza listener error:', err)
+    );
+
+    return () => unsubFacturas();
+  }, []);
+
+  // Forzar sincronización de las facturas locales hacia la nube
+  const handleSincronizarLocalHaciaNube = async () => {
+    if (invoices.length === 0) return;
+    try {
+      setSincronizandoNube(true);
+      await subirFacturasAFirestore(invoices);
+      setExitoForm(`¡Se sincronizaron ${invoices.length} facturas con la nube! Ahora estarán visibles en todas las computadoras.`);
+      setTimeout(() => setExitoForm(null), 5000);
+    } catch (err: any) {
+      console.error('Error sincronizando facturas a la nube:', err);
+      alert('Error al sincronizar con la nube: ' + (err.message || 'Intente nuevamente'));
+    } finally {
+      setSincronizandoNube(false);
+    }
+  };
 
   // Guardar en LocalStorage cada vez que cambien las facturas
   useEffect(() => {
@@ -1092,6 +1174,9 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     };
 
     setInvoices((prev) => [nuevaFactura, ...prev]);
+    setDoc(doc(db, 'facturas_cobranza', nuevaFactura.id), limpiarParaFirestore(nuevaFactura)).catch((err) =>
+      console.warn('Error guardando factura en Firestore:', err)
+    );
     setExitoForm(`Factura ${folioFinal} guardada exitosamente con estatus "${estatusFinal}".`);
 
     // Si la obra asignada es diferente a la que estábamos viendo en el dashboard, cambiar la vista a ella
@@ -1283,6 +1368,11 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
       setInvoices((prev) => [...facturasListas, ...prev]);
     }
 
+    // Sincronizar en la nube (Firestore)
+    subirFacturasAFirestore(facturasListas).catch((err) =>
+      console.warn('Error subiendo facturas importadas a Firestore:', err)
+    );
+
     setObraIdSeleccionada(targetObraId);
     setObraDestinoFacturaId(targetObraId);
 
@@ -1459,12 +1549,18 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     setInvoices((prev) =>
       prev.map((inv) => (inv.id === id ? { ...inv, estatus: nuevoEstatus } : inv))
     );
+    updateDoc(doc(db, 'facturas_cobranza', id), { estatus: nuevoEstatus }).catch((err) =>
+      console.warn('Error actualizando estatus en Firestore:', err)
+    );
   };
 
   // Eliminar factura
   const handleEliminarFactura = (id: string, folioEliminar: string) => {
     if (window.confirm(`¿Estás seguro de eliminar la factura "${folioEliminar}"? Esta acción no se puede deshacer.`)) {
       setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+      deleteDoc(doc(db, 'facturas_cobranza', id)).catch((err) =>
+        console.warn('Error eliminando factura en Firestore:', err)
+      );
     }
   };
 
@@ -1481,9 +1577,25 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
         `¿Estás seguro de que deseas eliminar las ${cant} facturas registradas en "${obraSeleccionada?.nombre || 'esta obra'}"?\n\nEsta acción borrará todas estas facturas de la memoria para que puedas volver a cargarlas limpiamente desde tu archivo de Excel.`
       )
     ) {
+      const facturasAEliminar = facturasDeObra;
       setInvoices((prev) => prev.filter((inv) => inv.obraId !== obraSeleccionada.id));
       setExitoForm(`Se eliminaron las ${cant} facturas correctamente.`);
       setTimeout(() => setExitoForm(null), 5000);
+
+      // Eliminar de Firestore en lotes
+      try {
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < facturasAEliminar.length; i += CHUNK_SIZE) {
+          const chunk = facturasAEliminar.slice(i, i + CHUNK_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach((inv) => {
+            batch.delete(doc(db, 'facturas_cobranza', inv.id));
+          });
+          batch.commit().catch((e) => console.warn(e));
+        }
+      } catch (err) {
+        console.error('Error eliminando facturas de Firestore:', err);
+      }
     }
   };
 
@@ -1544,34 +1656,38 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
     const desc = formDescripcion.trim() || 'Estimación de Obra';
     const fechaEmis = formFechaEmision.trim() || facturaAbonosEditando.fechaEmision || hoyStr;
 
+    const facturaActualizada: Invoice = {
+      ...facturaAbonosEditando,
+      folio: fol,
+      serie: s || undefined,
+      numeroFactura: num || undefined,
+      concepto: desc,
+      descripcion: desc,
+      fechaEmision: fechaEmis,
+      monto: nuevoMonto,
+      abono1: ab1,
+      fechaAbono1: formFechaAbono1,
+      abono2: ab2,
+      fechaAbono2: formFechaAbono2,
+      abono3: ab3,
+      fechaAbono3: formFechaAbono3,
+      abono4: ab4,
+      fechaAbono4: formFechaAbono4,
+      totalAbonado,
+      saldoPendiente,
+      estatus: estatusFinal,
+      notas: formNotasModal.trim(),
+    };
+
     setInvoices((prev) =>
-      prev.map((inv) =>
-        inv.id === facturaAbonosEditando.id
-          ? {
-              ...inv,
-              folio: fol,
-              serie: s || undefined,
-              numeroFactura: num || undefined,
-              concepto: desc,
-              descripcion: desc,
-              fechaEmision: fechaEmis,
-              monto: nuevoMonto,
-              abono1: ab1,
-              fechaAbono1: formFechaAbono1,
-              abono2: ab2,
-              fechaAbono2: formFechaAbono2,
-              abono3: ab3,
-              fechaAbono3: formFechaAbono3,
-              abono4: ab4,
-              fechaAbono4: formFechaAbono4,
-              totalAbonado,
-              saldoPendiente,
-              estatus: estatusFinal,
-              notas: formNotasModal.trim(),
-            }
-          : inv
-      )
+      prev.map((inv) => (inv.id === facturaAbonosEditando.id ? facturaActualizada : inv))
     );
+
+    setDoc(
+      doc(db, 'facturas_cobranza', facturaAbonosEditando.id),
+      limpiarParaFirestore(facturaActualizada),
+      { merge: true }
+    ).catch((err) => console.warn('Error guardando factura editada en Firestore:', err));
 
     setExitoForm(`¡Factura ${fol} actualizada correctamente!`);
     setFacturaAbonosEditando(null);
@@ -2510,6 +2626,20 @@ export default function FacturacionCobranza({ usuarioEmail }: FacturacionCobranz
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* BOTÓN SINCRONIZAR CON LA NUBE (FIRESTORE) */}
+            {invoices.length > 0 && (
+              <button
+                type="button"
+                onClick={handleSincronizarLocalHaciaNube}
+                disabled={sincronizandoNube}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-2 rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                title="Sincronizar todas las facturas a la nube (Firestore) para que se vean en cualquier computadora o celular"
+              >
+                <span>{sincronizandoNube ? '⏳' : '☁️'}</span>
+                <span>{sincronizandoNube ? 'Subiendo a la nube...' : `Sincronizar Nube (${invoices.length})`}</span>
+              </button>
+            )}
+
             {/* BOTÓN CARGAR DESDE EXCEL */}
             <button
               type="button"
