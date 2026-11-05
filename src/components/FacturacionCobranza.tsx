@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import * as XLSX from 'xlsx';
 import { db } from '../firebase';
 import type { Obra } from '../types';
 
@@ -12,15 +13,181 @@ export type EstatusFactura = 'Pendiente' | 'Pagada' | 'Cancelada';
 
 export interface Invoice {
   id: string;
-  folio: string;
+  folio: string; // Folio unificado (ej. "A-101" o "101")
+  serie?: string; // Columna Excel: Serie
+  numeroFactura?: string; // Columna Excel: Número de factura
   obraId: string;
-  concepto: ConceptoFactura;
-  fechaEmision: string; // YYYY-MM-DD
-  monto: number;
+  concepto: ConceptoFactura; // Columna Excel: Descripción
+  descripcion?: string; // Descripción detallada
+  fechaEmision: string; // Columna Excel: Fecha factura (YYYY-MM-DD)
+  monto: number; // Columna Excel: Monto factura
+
+  // Abonos 1 al 4 y sus fechas
+  abono1?: number;
+  fechaAbono1?: string;
+  abono2?: number;
+  fechaAbono2?: string;
+  abono3?: number;
+  fechaAbono3?: string;
+  abono4?: number;
+  fechaAbono4?: string;
+
+  totalAbonado?: number; // Suma de abono 1 + 2 + 3 + 4
+  saldoPendiente?: number; // Monto - totalAbonado
+
   estatus: EstatusFactura;
   notas?: string;
   createdAt?: string;
 }
+
+// ============================================================================
+// FUNCIONES AUXILIARES PARA LECTURA Y CONVERSIÓN DE EXCEL
+// ============================================================================
+
+export const parseExcelDate = (val: any): string => {
+  if (!val && val !== 0) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof val === 'number') {
+    // Número serial de Excel (ej: 45620)
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const millis = excelEpoch.getTime() + val * 86400000;
+    const dateObj = new Date(millis);
+    if (!isNaN(dateObj.getTime())) {
+      const y = dateObj.getUTCFullYear();
+      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+  if (typeof val === 'string') {
+    const str = val.trim();
+    if (!str) return '';
+    // DD/MM/YYYY o D/M/YYYY
+    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(str)) {
+      const parts = str.split('/');
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return `${year}-${month}-${day}`;
+    }
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      return str;
+    }
+    // DD-MM-YYYY
+    if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+      const parts = str.split('-');
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2];
+      return `${year}-${month}-${day}`;
+    }
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    return str;
+  }
+  return '';
+};
+
+export const parseExcelNumber = (val: any): number => {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[$ ,]/g, '').trim();
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+  }
+  return 0;
+};
+
+export const procesarFilaExcel = (row: Record<string, any>, index: number, obraIdTarget: string): Invoice => {
+  const mapa: Record<string, any> = {};
+  Object.keys(row).forEach((k) => {
+    const keyNorm = k
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '');
+    mapa[keyNorm] = row[k];
+  });
+
+  const rawFecha = mapa['fechafactura'] || mapa['fecha'] || mapa['fechadeemision'] || mapa['emision'];
+  const fechaFactura = parseExcelDate(rawFecha) || new Date().toISOString().split('T')[0];
+
+  const serie = String(mapa['serie'] || '').trim();
+  const numeroFactura = String(mapa['numerodefactura'] || mapa['numerofactura'] || mapa['numero'] || mapa['folio'] || '').trim();
+
+  let folio = '';
+  if (serie && numeroFactura) {
+    folio = `${serie}-${numeroFactura}`;
+  } else if (numeroFactura) {
+    folio = numeroFactura;
+  } else if (serie) {
+    folio = serie;
+  } else {
+    folio = `FAC-${String(index + 1).padStart(3, '0')}`;
+  }
+
+  const descripcion = String(mapa['descripcion'] || mapa['concepto'] || 'Estimación de Obra').trim();
+  const rawMonto = mapa['montofactura'] || mapa['monto'] || mapa['total'] || mapa['importe'];
+  const montoFactura = parseExcelNumber(rawMonto);
+
+  const abono1 = parseExcelNumber(mapa['abono1'] || mapa['pago1']);
+  const fechaAbono1 = parseExcelDate(mapa['fechaabono1'] || mapa['fechapago1']);
+
+  const abono2 = parseExcelNumber(mapa['abono2'] || mapa['pago2']);
+  const fechaAbono2 = parseExcelDate(mapa['fechaabono2'] || mapa['fechapago2']);
+
+  const abono3 = parseExcelNumber(mapa['abono3'] || mapa['pago3']);
+  const fechaAbono3 = parseExcelDate(mapa['fechaabono3'] || mapa['fechapago3']);
+
+  const abono4 = parseExcelNumber(mapa['abono4'] || mapa['pago4']);
+  const fechaAbono4 = parseExcelDate(mapa['fechaabono4'] || mapa['fechapago4']);
+
+  const totalAbonado = abono1 + abono2 + abono3 + abono4;
+  const saldoPendiente = Math.max(0, montoFactura - totalAbonado);
+
+  let estatus: EstatusFactura = 'Pendiente';
+  if (montoFactura > 0 && totalAbonado >= montoFactura) {
+    estatus = 'Pagada';
+  } else {
+    estatus = 'Pendiente';
+  }
+
+  return {
+    id: `inv-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+    folio,
+    serie,
+    numeroFactura,
+    obraId: obraIdTarget,
+    concepto: descripcion,
+    descripcion,
+    fechaEmision: fechaFactura,
+    monto: montoFactura,
+    abono1,
+    fechaAbono1,
+    abono2,
+    fechaAbono2,
+    abono3,
+    fechaAbono3,
+    abono4,
+    fechaAbono4,
+    totalAbonado,
+    saldoPendiente,
+    estatus,
+    createdAt: new Date().toISOString(),
+  };
+};
 
 export interface ObraItem {
   id: string;
@@ -398,15 +565,50 @@ export default function FacturacionCobranza() {
   const [cargandoNuevaObra, setCargandoNuevaObra] = useState(false);
   const [errorNuevaObra, setErrorNuevaObra] = useState<string | null>(null);
 
+  // ==========================================================================
+  // ESTADOS PARA CARGA MASIVA DESDE EXCEL
+  // ==========================================================================
+  const [modalImportarExcelOpen, setModalImportarExcelOpen] = useState(false);
+  const [archivoExcelSeleccionado, setArchivoExcelSeleccionado] = useState<File | null>(null);
+  const [filasExcelPrevia, setFilasExcelPrevia] = useState<Invoice[]>([]);
+  const [errorImportarExcel, setErrorImportarExcel] = useState<string | null>(null);
+  const [cargandoImportacion, setCargandoImportacion] = useState(false);
+  const [modoImportacion, setModoImportacion] = useState<'agregar' | 'reemplazar'>('agregar');
+  const [obraDestinoImportId, setObraDestinoImportId] = useState<string>(() => obraIdSeleccionada);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Modal para ver desglose de Abonos 1 al 4 de una factura
+  const [facturaDetalleAbonos, setFacturaDetalleAbonos] = useState<Invoice | null>(null);
+
+  // Estados del Formulario Manual de Factura
   const [folio, setFolio] = useState('');
+  const [serieManual, setSerieManual] = useState('');
+  const [numeroFacturaManual, setNumeroFacturaManual] = useState('');
   const [concepto, setConcepto] = useState<ConceptoFactura>('Estimación');
   const [conceptoPersonalizado, setConceptoPersonalizado] = useState('');
   const [monto, setMonto] = useState<string>('');
   const [fechaEmision, setFechaEmision] = useState<string>(hoyStr);
   const [estatusInicial, setEstatusInicial] = useState<EstatusFactura>('Pendiente');
   const [notas, setNotas] = useState('');
+  
+  // Abonos manuales 1 al 4 (opcionales)
+  const [mostrarAbonosForm, setMostrarAbonosForm] = useState(false);
+  const [abono1Form, setAbono1Form] = useState('');
+  const [fechaAbono1Form, setFechaAbono1Form] = useState('');
+  const [abono2Form, setAbono2Form] = useState('');
+  const [fechaAbono2Form, setFechaAbono2Form] = useState('');
+  const [abono3Form, setAbono3Form] = useState('');
+  const [fechaAbono3Form, setFechaAbono3Form] = useState('');
+  const [abono4Form, setAbono4Form] = useState('');
+  const [fechaAbono4Form, setFechaAbono4Form] = useState('');
+
   const [errorForm, setErrorForm] = useState<string | null>(null);
   const [exitoForm, setExitoForm] = useState<string | null>(null);
+
+  // Sincronizar obra destino de importación
+  useEffect(() => {
+    setObraDestinoImportId(obraIdSeleccionada);
+  }, [obraIdSeleccionada]);
 
   // Filtros de la tabla de facturas
   const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | EstatusFactura>('Todos');
@@ -432,9 +634,13 @@ export default function FacturacionCobranza() {
     const facturasValidas = facturasDeObra.filter((f) => f.estatus !== 'Cancelada');
     const totalFacturado = facturasValidas.reduce((sum, f) => sum + (Number(f.monto) || 0), 0);
 
-    // Facturas Pagadas (Cobrado real)
-    const facturasPagadas = facturasDeObra.filter((f) => f.estatus === 'Pagada');
-    const totalCobrado = facturasPagadas.reduce((sum, f) => sum + (Number(f.monto) || 0), 0);
+    // Facturas Pagadas / Cobradas (Suma de abonos si existen, o monto completo si fue marcada como Pagada)
+    const totalCobrado = facturasValidas.reduce((sum, f) => {
+      const abonado = Number(f.totalAbonado) || 0;
+      if (abonado > 0) return sum + abonado;
+      if (f.estatus === 'Pagada') return sum + (Number(f.monto) || 0);
+      return sum;
+    }, 0);
 
     // Saldo Pendiente por Facturar = Monto Contrato Neto - Total Facturado
     const saldoPendienteFacturar = Math.max(0, montoContratoNeto - totalFacturado);
@@ -643,9 +849,22 @@ export default function FacturacionCobranza() {
     setErrorForm(null);
     setExitoForm(null);
 
-    const folioLimpio = folio.trim().toUpperCase();
-    if (!folioLimpio) {
-      setErrorForm('Por favor especifica el Folio de la factura.');
+    const serieLimpia = serieManual.trim().toUpperCase();
+    const numeroLimpio = numeroFacturaManual.trim().toUpperCase();
+
+    let folioFinal = folio.trim().toUpperCase();
+    if (!folioFinal) {
+      if (serieLimpia && numeroLimpio) {
+        folioFinal = `${serieLimpia}-${numeroLimpio}`;
+      } else if (numeroLimpio) {
+        folioFinal = numeroLimpio;
+      } else if (serieLimpia) {
+        folioFinal = serieLimpia;
+      }
+    }
+
+    if (!folioFinal) {
+      setErrorForm('Por favor especifica el Folio o Número de factura.');
       return;
     }
 
@@ -653,10 +872,10 @@ export default function FacturacionCobranza() {
 
     // Validar duplicidad de folio en la misma obra
     const folioExiste = invoices.some(
-      (inv) => inv.obraId === idObraAsignada && inv.folio.toUpperCase() === folioLimpio
+      (inv) => inv.obraId === idObraAsignada && inv.folio.toUpperCase() === folioFinal
     );
     if (folioExiste) {
-      setErrorForm(`El folio "${folioLimpio}" ya fue registrado para este contrato. Por favor verifica.`);
+      setErrorForm(`El folio "${folioFinal}" ya fue registrado para este contrato. Por favor verifica.`);
       return;
     }
 
@@ -668,20 +887,46 @@ export default function FacturacionCobranza() {
 
     const conceptoFinal = concepto === 'Otro' ? conceptoPersonalizado.trim() || 'Otro' : concepto;
 
+    // Abonos 1 al 4
+    const ab1 = parseExcelNumber(abono1Form);
+    const ab2 = parseExcelNumber(abono2Form);
+    const ab3 = parseExcelNumber(abono3Form);
+    const ab4 = parseExcelNumber(abono4Form);
+    const totAbonado = ab1 + ab2 + ab3 + ab4;
+    const saldo = Math.max(0, montoNum - totAbonado);
+
+    let estatusFinal = estatusInicial;
+    if (montoNum > 0 && totAbonado >= montoNum) {
+      estatusFinal = 'Pagada';
+    }
+
     const nuevaFactura: Invoice = {
       id: `inv-${Date.now()}`,
-      folio: folioLimpio,
+      folio: folioFinal,
+      serie: serieLimpia,
+      numeroFactura: numeroLimpio,
       obraId: idObraAsignada,
       concepto: conceptoFinal,
+      descripcion: conceptoFinal,
       fechaEmision: fechaEmision || hoyStr,
       monto: montoNum,
-      estatus: estatusInicial,
+      abono1: ab1,
+      fechaAbono1: fechaAbono1Form,
+      abono2: ab2,
+      fechaAbono2: fechaAbono2Form,
+      abono3: ab3,
+      fechaAbono3: fechaAbono3Form,
+      abono4: ab4,
+      fechaAbono4: fechaAbono4Form,
+      totalAbonado: totAbonado,
+      saldoPendiente: saldo,
+      estatus: estatusFinal,
       notas: notas.trim(),
       createdAt: new Date().toISOString(),
     };
 
     setInvoices((prev) => [nuevaFactura, ...prev]);
-    setExitoForm(`Factura ${folioLimpio} guardada exitosamente con estatus "${estatusInicial}".`);
+    setExitoForm(`Factura ${folioFinal} guardada exitosamente con estatus "${estatusFinal}".`);
 
     // Si la obra asignada es diferente a la que estábamos viendo en el dashboard, cambiar la vista a ella
     if (obraIdSeleccionada !== idObraAsignada) {
@@ -690,10 +935,273 @@ export default function FacturacionCobranza() {
 
     // Limpiar formulario
     setFolio('');
+    setSerieManual('');
+    setNumeroFacturaManual('');
     setMonto('');
     setNotas('');
     setConceptoPersonalizado('');
+    setAbono1Form('');
+    setFechaAbono1Form('');
+    setAbono2Form('');
+    setFechaAbono2Form('');
+    setAbono3Form('');
+    setFechaAbono3Form('');
+    setAbono4Form('');
+    setFechaAbono4Form('');
     setTimeout(() => setExitoForm(null), 4000);
+  };
+
+  // ==========================================================================
+  // MANEJADORES DE IMPORTACIÓN Y EXPORTACIÓN DESDE EXCEL
+  // ==========================================================================
+
+  // Procesar archivo Excel subido
+  const handleProcesarArchivoExcel = (file: File) => {
+    setErrorImportarExcel(null);
+    setArchivoExcelSeleccionado(file);
+    setCargandoImportacion(true);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+        const firstSheetName = workbook.SheetNames[0];
+        if (!firstSheetName) {
+          setErrorImportarExcel('El archivo no contiene ninguna hoja de cálculo.');
+          setCargandoImportacion(false);
+          return;
+        }
+
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+
+        if (!jsonData || jsonData.length === 0) {
+          setErrorImportarExcel('La hoja de cálculo está vacía. Por favor revisa el archivo.');
+          setFilasExcelPrevia([]);
+          setCargandoImportacion(false);
+          return;
+        }
+
+        const targetObra = obraDestinoImportId || obraSeleccionada.id;
+        const facturasProcesadas: Invoice[] = jsonData
+          .map((row, idx) => procesarFilaExcel(row, idx, targetObra))
+          .filter((f) => f.monto > 0 || f.folio);
+
+        if (facturasProcesadas.length === 0) {
+          setErrorImportarExcel(
+            'No se encontraron facturas válidas. Verifica que las columnas coincidan con las requeridas: Fecha factura, Serie, Número de factura, Descripción, Monto factura, Abono 1, etc.'
+          );
+          setFilasExcelPrevia([]);
+        } else {
+          setFilasExcelPrevia(facturasProcesadas);
+        }
+      } catch (err: any) {
+        console.error('Error al procesar archivo Excel:', err);
+        setErrorImportarExcel('Ocurrió un error al leer el archivo. Asegúrate de que sea un archivo válido de Excel (.xlsx, .xls o .csv).');
+      } finally {
+        setCargandoImportacion(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Confirmar importación a la base de datos
+  const handleConfirmarImportacionExcel = () => {
+    if (filasExcelPrevia.length === 0) {
+      setErrorImportarExcel('No hay facturas válidas para importar.');
+      return;
+    }
+
+    const targetObraId = obraDestinoImportId || obraSeleccionada.id;
+
+    // Asignar el obraId definitivo a todas las facturas
+    const facturasListas = filasExcelPrevia.map((f) => ({
+      ...f,
+      obraId: targetObraId,
+    }));
+
+    if (modoImportacion === 'reemplazar') {
+      // Reemplaza las facturas existentes de esta obra
+      setInvoices((prev) => [
+        ...facturasListas,
+        ...prev.filter((inv) => inv.obraId !== targetObraId),
+      ]);
+    } else {
+      // Agrega a las existentes
+      setInvoices((prev) => [...facturasListas, ...prev]);
+    }
+
+    setObraIdSeleccionada(targetObraId);
+    setObraDestinoFacturaId(targetObraId);
+
+    setExitoForm(`¡Se importaron exitosamente ${facturasListas.length} facturas desde Excel para esta obra!`);
+    setModalImportarExcelOpen(false);
+    setArchivoExcelSeleccionado(null);
+    setFilasExcelPrevia([]);
+    setTimeout(() => setExitoForm(null), 5000);
+  };
+
+  // Descargar plantilla Excel oficial con las columnas exactas solicitadas
+  const handleDescargarPlantillaExcel = () => {
+    const encabezados = [
+      'Fecha factura',
+      'Serie',
+      'Número de factura',
+      'Descripción',
+      'Monto factura',
+      'Abono 1',
+      'Fecha abono 1',
+      'Abono 2',
+      'Fecha abono 2',
+      'Abono 3',
+      'Fecha abono 3',
+      'Abono 4',
+      'Fecha abono 4',
+    ];
+
+    const datosEjemplo = [
+      {
+        'Fecha factura': '2026-11-01',
+        'Serie': 'A',
+        'Número de factura': '101',
+        'Descripción': 'Anticipo contractual 30%',
+        'Monto factura': 250000,
+        'Abono 1': 250000,
+        'Fecha abono 1': '2026-11-02',
+        'Abono 2': '',
+        'Fecha abono 2': '',
+        'Abono 3': '',
+        'Fecha abono 3': '',
+        'Abono 4': '',
+        'Fecha abono 4': '',
+      },
+      {
+        'Fecha factura': '2026-11-03',
+        'Serie': 'A',
+        'Número de factura': '102',
+        'Descripción': 'Estimación No. 1 Avance de Herrería y Estructura',
+        'Monto factura': 180000,
+        'Abono 1': 90000,
+        'Fecha abono 1': '2026-11-04',
+        'Abono 2': 90000,
+        'Fecha abono 2': '2026-11-05',
+        'Abono 3': '',
+        'Fecha abono 3': '',
+        'Abono 4': '',
+        'Fecha abono 4': '',
+      },
+      {
+        'Fecha factura': '2026-11-05',
+        'Serie': 'RM',
+        'Número de factura': '5510',
+        'Descripción': 'Renta Maquinaria Retroexcavadora Cat 426F2',
+        'Monto factura': 85000,
+        'Abono 1': '',
+        'Fecha abono 1': '',
+        'Abono 2': '',
+        'Fecha abono 2': '',
+        'Abono 3': '',
+        'Fecha abono 3': '',
+        'Abono 4': '',
+        'Fecha abono 4': '',
+      },
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(datosEjemplo, { header: encabezados });
+    ws['!cols'] = [
+      { wch: 14 },
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 40 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Facturas');
+    XLSX.writeFile(wb, `Plantilla_Facturas_${obraSeleccionada?.contrato || 'Obra'}.xlsx`);
+  };
+
+  // Exportar facturas de la obra actual a Excel (.xlsx) con las 13 columnas completas
+  const handleExportarExcel = () => {
+    if (facturasDeObra.length === 0) {
+      alert('No hay facturas registradas en esta obra para exportar.');
+      return;
+    }
+
+    const encabezados = [
+      'Fecha factura',
+      'Serie',
+      'Número de factura',
+      'Descripción',
+      'Monto factura',
+      'Abono 1',
+      'Fecha abono 1',
+      'Abono 2',
+      'Fecha abono 2',
+      'Abono 3',
+      'Fecha abono 3',
+      'Abono 4',
+      'Fecha abono 4',
+      'Total Cobrado',
+      'Saldo Pendiente',
+      'Estatus',
+    ];
+
+    const dataRows = facturasDeObra.map((f) => {
+      const totAbonado =
+        Number(f.totalAbonado) > 0 ? Number(f.totalAbonado) : f.estatus === 'Pagada' ? f.monto : 0;
+      const saldo = Math.max(0, f.monto - totAbonado);
+      return {
+        'Fecha factura': f.fechaEmision,
+        'Serie': f.serie || '',
+        'Número de factura': f.numeroFactura || f.folio,
+        'Descripción': f.descripcion || f.concepto,
+        'Monto factura': f.monto,
+        'Abono 1': f.abono1 || '',
+        'Fecha abono 1': f.fechaAbono1 || '',
+        'Abono 2': f.abono2 || '',
+        'Fecha abono 2': f.fechaAbono2 || '',
+        'Abono 3': f.abono3 || '',
+        'Fecha abono 3': f.fechaAbono3 || '',
+        'Abono 4': f.abono4 || '',
+        'Fecha abono 4': f.fechaAbono4 || '',
+        'Total Cobrado': totAbonado,
+        'Saldo Pendiente': saldo,
+        'Estatus': f.estatus,
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(dataRows, { header: encabezados });
+    ws['!cols'] = [
+      { wch: 14 },
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 40 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 12 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Facturas_Obra');
+    XLSX.writeFile(wb, `Facturacion_${obraSeleccionada?.contrato || 'Obra'}_${hoyStr}.xlsx`);
   };
 
   // Cambiar estatus de una factura rápidamente
@@ -708,34 +1216,6 @@ export default function FacturacionCobranza() {
     if (window.confirm(`¿Estás seguro de eliminar la factura "${folioEliminar}"? Esta acción no se puede deshacer.`)) {
       setInvoices((prev) => prev.filter((inv) => inv.id !== id));
     }
-  };
-
-  // Exportar facturas de la obra a formato CSV (Excel)
-  const handleExportarCSV = () => {
-    if (facturasDeObra.length === 0) {
-      alert('No hay facturas registradas en esta obra para exportar.');
-      return;
-    }
-
-    const encabezados = ['Folio', 'Concepto', 'Fecha Emision', 'Monto MXN', 'Estatus', 'Notas'];
-    const filas = facturasDeObra.map((f) => [
-      `"${f.folio}"`,
-      `"${f.concepto}"`,
-      `"${f.fechaEmision}"`,
-      f.monto.toFixed(2),
-      `"${f.estatus}"`,
-      `"${(f.notas || '').replace(/"/g, '""')}"`,
-    ]);
-
-    const contenidoCSV = 'sep=,\n' + [encabezados.join(','), ...filas.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([contenidoCSV], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `Facturacion_${obraSeleccionada?.contrato || 'Obra'}_${hoyStr}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   // --------------------------------------------------------------------------
@@ -1130,7 +1610,7 @@ export default function FacturacionCobranza() {
         id="seccion-registro-factura"
         className="bg-white dark:bg-gray-900 p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-800"
       >
-        <div className="border-b border-gray-100 dark:border-gray-800 pb-3 mb-4 flex items-center justify-between">
+        <div className="border-b border-gray-100 dark:border-gray-800 pb-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold">
               📝
@@ -1144,6 +1624,22 @@ export default function FacturacionCobranza() {
               </p>
             </div>
           </div>
+
+          {/* BOTÓN PROMINENTE PARA CARGAR FACTURAS DESDE EXCEL */}
+          <button
+            type="button"
+            onClick={() => {
+              setErrorImportarExcel(null);
+              setFilasExcelPrevia([]);
+              setArchivoExcelSeleccionado(null);
+              setModalImportarExcelOpen(true);
+            }}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2 rounded-xl text-xs transition-all shadow-sm hover:shadow flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap self-start sm:self-auto"
+            title="Cargar facturas masivamente desde un archivo de Excel (.xlsx, .xls)"
+          >
+            <span className="text-base">📥</span>
+            <span>Cargar Facturas desde Excel</span>
+          </button>
         </div>
 
         {errorForm && (
@@ -1210,26 +1706,93 @@ export default function FacturacionCobranza() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-            {/* FOLIO */}
+          {/* CAMPOS DE FACTURA CON SERIE Y NÚMERO */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3.5">
+            {/* SERIE */}
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Folio / No. Factura *
+                Serie (Opcional)
               </label>
               <input
                 type="text"
-                required
-                placeholder="Ej. FAC-0115, EST-02"
-                value={folio}
-                onChange={(e) => setFolio(e.target.value)}
+                placeholder="Ej. A, B, FAC"
+                value={serieManual}
+                onChange={(e) => {
+                  setSerieManual(e.target.value);
+                  const s = e.target.value.trim().toUpperCase();
+                  const n = numeroFacturaManual.trim().toUpperCase();
+                  if (s && n) setFolio(`${s}-${n}`);
+                  else if (n) setFolio(n);
+                  else if (s) setFolio(s);
+                }}
                 className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
               />
             </div>
 
-            {/* CONCEPTO */}
+            {/* NÚMERO DE FACTURA */}
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Concepto de Facturación *
+                Número Factura *
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. 101, 5510"
+                value={numeroFacturaManual}
+                onChange={(e) => {
+                  setNumeroFacturaManual(e.target.value);
+                  const s = serieManual.trim().toUpperCase();
+                  const n = e.target.value.trim().toUpperCase();
+                  if (s && n) setFolio(`${s}-${n}`);
+                  else if (n) setFolio(n);
+                  else if (s) setFolio(s);
+                }}
+                className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+              />
+            </div>
+
+            {/* FOLIO IDENTIFICADOR */}
+            <div className="lg:col-span-2">
+              <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                Folio Unificado *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. A-101, FAC-0115"
+                value={folio}
+                onChange={(e) => setFolio(e.target.value)}
+                className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+              />
+            </div>
+
+            {/* MONTO FACTURA */}
+            <div className="lg:col-span-2">
+              <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                Monto Factura ($ MXN) *
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">
+                  $
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  min="0.01"
+                  placeholder="0.00"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  className="w-full p-2.5 pl-7 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-black focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {/* CONCEPTO / DESCRIPCIÓN */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                Descripción / Concepto *
               </label>
               <select
                 value={concepto}
@@ -1244,32 +1807,10 @@ export default function FacturacionCobranza() {
               </select>
             </div>
 
-            {/* MONTO */}
-            <div>
-              <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Monto Facturado ($ MXN) *
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">
-                  $
-                </span>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  min="0.01"
-                  placeholder="0.00"
-                  value={monto}
-                  onChange={(e) => setMonto(e.target.value)}
-                  className="w-full p-2.5 pl-7 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
-                />
-              </div>
-            </div>
-
             {/* FECHA DE EMISIÓN */}
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Fecha de Emisión *
+                Fecha Factura *
               </label>
               <input
                 type="date"
@@ -1279,26 +1820,7 @@ export default function FacturacionCobranza() {
                 className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
               />
             </div>
-          </div>
 
-          {/* CONCEPTO PERSONALIZADO SI SELECCIONA 'OTRO' */}
-          {concepto === 'Otro' && (
-            <div>
-              <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Especifica el Concepto Personalizado *
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ej. Trabajos extraordinarios de soldadura, Flete especial..."
-                value={conceptoPersonalizado}
-                onChange={(e) => setConceptoPersonalizado(e.target.value)}
-                className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             {/* ESTATUS INICIAL */}
             <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
@@ -1314,20 +1836,157 @@ export default function FacturacionCobranza() {
                 <option value="Cancelada">🔴 Cancelada</option>
               </select>
             </div>
+          </div>
 
-            {/* NOTAS / OBSERVACIONES */}
-            <div className="sm:col-span-2">
+          {/* CONCEPTO PERSONALIZADO SI SELECCIONA 'OTRO' */}
+          {concepto === 'Otro' && (
+            <div>
               <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Notas / Referencia de Cobro (Opcional)
+                Especifica la Descripción Detallada *
               </label>
               <input
                 type="text"
-                placeholder="Ej. Transferencia Bancomer #88392, o detalle de retenciones..."
-                value={notas}
-                onChange={(e) => setNotas(e.target.value)}
-                className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+                required
+                placeholder="Ej. Trabajos extraordinarios de soldadura, Flete especial..."
+                value={conceptoPersonalizado}
+                onChange={(e) => setConceptoPersonalizado(e.target.value)}
+                className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
               />
             </div>
+          )}
+
+          {/* SECCIÓN DESPLEGABLE DE ABONOS 1 AL 4 */}
+          <div className="bg-gray-50 dark:bg-gray-800/60 p-3.5 rounded-xl border border-gray-200 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={() => setMostrarAbonosForm(!mostrarAbonosForm)}
+              className="w-full flex items-center justify-between text-xs font-black text-gray-800 dark:text-gray-200 cursor-pointer"
+            >
+              <span className="flex items-center gap-2">
+                <span>💳</span>
+                <span>Desglose de Abonos / Cobros Recibidos (Abono 1 al 4 opcionales)</span>
+                {(parseExcelNumber(abono1Form) + parseExcelNumber(abono2Form) + parseExcelNumber(abono3Form) + parseExcelNumber(abono4Form)) > 0 && (
+                  <span className="bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full text-[10px]">
+                    Total Cobrado: {formatPesos(parseExcelNumber(abono1Form) + parseExcelNumber(abono2Form) + parseExcelNumber(abono3Form) + parseExcelNumber(abono4Form))}
+                  </span>
+                )}
+              </span>
+              <span className="text-blue-600 dark:text-blue-400 font-bold text-[11px]">
+                {mostrarAbonosForm ? '▲ Ocultar Abonos' : '▼ Capturar Abonos (1 al 4)'}
+              </span>
+            </button>
+
+            {mostrarAbonosForm && (
+              <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-3">
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  Puedes capturar hasta 4 abonos parciales con sus fechas correspondientes. Si el total abonado cubre el monto de la factura, se marcará automáticamente como <strong>Pagada</strong>.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* ABONO 1 */}
+                  <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span className="block text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400 mb-1.5">
+                      Abono 1
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto $ 0.00"
+                      value={abono1Form}
+                      onChange={(e) => setAbono1Form(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white mb-2"
+                    />
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 1:</label>
+                    <input
+                      type="date"
+                      value={fechaAbono1Form}
+                      onChange={(e) => setFechaAbono1Form(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+
+                  {/* ABONO 2 */}
+                  <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span className="block text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400 mb-1.5">
+                      Abono 2
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto $ 0.00"
+                      value={abono2Form}
+                      onChange={(e) => setAbono2Form(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white mb-2"
+                    />
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 2:</label>
+                    <input
+                      type="date"
+                      value={fechaAbono2Form}
+                      onChange={(e) => setFechaAbono2Form(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+
+                  {/* ABONO 3 */}
+                  <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span className="block text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400 mb-1.5">
+                      Abono 3
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto $ 0.00"
+                      value={abono3Form}
+                      onChange={(e) => setAbono3Form(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white mb-2"
+                    />
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 3:</label>
+                    <input
+                      type="date"
+                      value={fechaAbono3Form}
+                      onChange={(e) => setFechaAbono3Form(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+
+                  {/* ABONO 4 */}
+                  <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span className="block text-[11px] font-black uppercase text-emerald-600 dark:text-emerald-400 mb-1.5">
+                      Abono 4
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto $ 0.00"
+                      value={abono4Form}
+                      onChange={(e) => setAbono4Form(e.target.value)}
+                      className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs font-bold text-gray-900 dark:text-white mb-2"
+                    />
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Fecha Abono 4:</label>
+                    <input
+                      type="date"
+                      value={fechaAbono4Form}
+                      onChange={(e) => setFechaAbono4Form(e.target.value)}
+                      className="w-full p-1.5 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* NOTAS / OBSERVACIONES */}
+          <div>
+            <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+              Notas / Referencia de Cobro (Opcional)
+            </label>
+            <input
+              type="text"
+              placeholder="Ej. Transferencia Bancomer #88392, o detalle de retenciones..."
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              className="w-full p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors"
+            />
           </div>
 
           <div className="flex justify-end pt-2">
@@ -1370,12 +2029,28 @@ export default function FacturacionCobranza() {
               className="p-2 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-600 focus:outline-none transition-colors w-full sm:w-56"
             />
 
-            {/* BOTÓN EXPORTAR CSV */}
+            {/* BOTÓN CARGAR DESDE EXCEL */}
             <button
               type="button"
-              onClick={handleExportarCSV}
+              onClick={() => {
+                setErrorImportarExcel(null);
+                setFilasExcelPrevia([]);
+                setArchivoExcelSeleccionado(null);
+                setModalImportarExcelOpen(true);
+              }}
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-              title="Descargar lista de facturas en Excel CSV"
+              title="Cargar facturas masivamente desde archivo Excel (.xlsx)"
+            >
+              <span>📥</span>
+              <span>Cargar Excel</span>
+            </button>
+
+            {/* BOTÓN EXPORTAR EXCEL (.xlsx) */}
+            <button
+              type="button"
+              onClick={handleExportarExcel}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="Descargar lista de facturas completa en Excel (.xlsx)"
             >
               <span>📊</span>
               <span>Exportar Excel</span>
@@ -1424,133 +2099,180 @@ export default function FacturacionCobranza() {
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-gray-100 dark:bg-gray-800/90 text-gray-600 dark:text-gray-300 uppercase text-[10px] font-black tracking-wider border-b border-gray-200 dark:border-gray-700">
-                <th className="py-3 px-4">Folio</th>
-                <th className="py-3 px-4">Concepto</th>
+                <th className="py-3 px-4">Folio / Factura</th>
+                <th className="py-3 px-4">Descripción / Concepto</th>
                 <th className="py-3 px-4">Fecha Emisión</th>
-                <th className="py-3 px-4 text-right">Monto ($ MXN)</th>
+                <th className="py-3 px-4 text-right">Monto Factura</th>
+                <th className="py-3 px-4 text-right">Cobrado / Saldo</th>
                 <th className="py-3 px-4 text-center">Estatus</th>
-                <th className="py-3 px-4">Notas / Observaciones</th>
+                <th className="py-3 px-4 text-center">Abonos (1-4)</th>
+                <th className="py-3 px-4">Observaciones</th>
                 <th className="py-3 px-4 text-center">Acciones Rápidas</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-800 font-medium">
               {facturasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-gray-400 dark:text-gray-500">
+                  <td colSpan={9} className="py-10 text-center text-gray-400 dark:text-gray-500">
                     <span className="text-2xl block mb-1">📭</span>
                     <span>No hay facturas que coincidan con los criterios seleccionados.</span>
                   </td>
                 </tr>
               ) : (
-                facturasFiltradas.map((inv) => (
-                  <tr
-                    key={inv.id}
-                    className="hover:bg-blue-50/40 dark:hover:bg-gray-800/50 transition-colors"
-                  >
-                    {/* FOLIO */}
-                    <td className="py-3 px-4 font-black text-gray-900 dark:text-white">
-                      {inv.folio}
-                    </td>
+                facturasFiltradas.map((inv) => {
+                  const cobradoReal =
+                    Number(inv.totalAbonado) > 0
+                      ? Number(inv.totalAbonado)
+                      : inv.estatus === 'Pagada'
+                      ? inv.monto
+                      : 0;
+                  const saldoReal = Math.max(0, inv.monto - cobradoReal);
+                  const abonosCount = [inv.abono1, inv.abono2, inv.abono3, inv.abono4].filter(
+                    (a) => Number(a) > 0
+                  ).length;
 
-                    {/* CONCEPTO */}
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[11px] ${
-                        inv.concepto === 'Anticipo'
-                          ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
-                          : inv.concepto === 'Estimación'
-                          ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                          : inv.concepto === 'Renta Maquinaria'
-                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'
-                      }`}>
-                        <span>
-                          {inv.concepto === 'Anticipo' && '🎯'}
-                          {inv.concepto === 'Estimación' && '📈'}
-                          {inv.concepto === 'Renta Maquinaria' && '🚜'}
-                          {inv.concepto !== 'Anticipo' && inv.concepto !== 'Estimación' && inv.concepto !== 'Renta Maquinaria' && '🏷️'}
+                  return (
+                    <tr
+                      key={inv.id}
+                      className="hover:bg-blue-50/40 dark:hover:bg-gray-800/50 transition-colors"
+                    >
+                      {/* FOLIO Y SERIE */}
+                      <td className="py-3 px-4">
+                        <span className="font-black text-gray-900 dark:text-white block">
+                          {inv.folio}
                         </span>
-                        <span>{inv.concepto}</span>
-                      </span>
-                    </td>
-
-                    {/* FECHA */}
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-300">
-                      {inv.fechaEmision}
-                    </td>
-
-                    {/* MONTO */}
-                    <td className="py-3 px-4 text-right font-black text-sm text-gray-900 dark:text-white">
-                      {formatPesos(inv.monto)}
-                    </td>
-
-                    {/* ESTATUS BADGE */}
-                    <td className="py-3 px-4 text-center">
-                      <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        inv.estatus === 'Pagada'
-                          ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                          : inv.estatus === 'Pendiente'
-                          ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 animate-pulse'
-                          : 'bg-red-100 dark:bg-red-950/70 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 line-through'
-                      }`}>
-                        {inv.estatus === 'Pagada' && '🟢 PAGADA'}
-                        {inv.estatus === 'Pendiente' && '🟡 PENDIENTE'}
-                        {inv.estatus === 'Cancelada' && '🔴 CANCELADA'}
-                      </span>
-                    </td>
-
-                    {/* NOTAS */}
-                    <td className="py-3 px-4 text-gray-500 dark:text-gray-400 text-[11px] max-w-xs truncate" title={inv.notas || ''}>
-                      {inv.notas || '—'}
-                    </td>
-
-                    {/* BOTONES RÁPIDOS DE CAMBIO DE ESTATUS */}
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-1.5">
-                        {inv.estatus !== 'Pagada' && (
-                          <button
-                            type="button"
-                            onClick={() => handleCambiarEstatus(inv.id, 'Pagada')}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors shadow-xs cursor-pointer"
-                            title="Marcar como cobrada / pagada (actualiza Dashboard)"
-                          >
-                            ✓ Pagada
-                          </button>
+                        {(inv.serie || inv.numeroFactura) && (
+                          <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                            {inv.serie ? `Serie: ${inv.serie}` : ''}
+                            {inv.serie && inv.numeroFactura ? ' | ' : ''}
+                            {inv.numeroFactura ? `No. ${inv.numeroFactura}` : ''}
+                          </span>
                         )}
+                      </td>
 
-                        {inv.estatus !== 'Pendiente' && (
-                          <button
-                            type="button"
-                            onClick={() => handleCambiarEstatus(inv.id, 'Pendiente')}
-                            className="bg-amber-500 hover:bg-amber-600 text-gray-900 px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors shadow-xs cursor-pointer"
-                            title="Marcar como pendiente de cobro"
-                          >
-                            ⏳ Pendiente
-                          </button>
-                        )}
+                      {/* CONCEPTO */}
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[11px] ${
+                          inv.concepto === 'Anticipo'
+                            ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
+                            : inv.concepto === 'Estimación'
+                            ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                            : inv.concepto === 'Renta Maquinaria'
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300'
+                        }`}>
+                          <span>
+                            {inv.concepto === 'Anticipo' && '🎯'}
+                            {inv.concepto === 'Estimación' && '📈'}
+                            {inv.concepto === 'Renta Maquinaria' && '🚜'}
+                            {inv.concepto !== 'Anticipo' && inv.concepto !== 'Estimación' && inv.concepto !== 'Renta Maquinaria' && '🏷️'}
+                          </span>
+                          <span>{inv.descripcion || inv.concepto}</span>
+                        </span>
+                      </td>
 
-                        {inv.estatus !== 'Cancelada' && (
-                          <button
-                            type="button"
-                            onClick={() => handleCambiarEstatus(inv.id, 'Cancelada')}
-                            className="bg-gray-200 dark:bg-gray-800 hover:bg-red-100 dark:hover:bg-red-950/70 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-300 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                            title="Cancelar factura"
-                          >
-                            ✕ Cancelar
-                          </button>
-                        )}
+                      {/* FECHA */}
+                      <td className="py-3 px-4 text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                        {inv.fechaEmision}
+                      </td>
 
+                      {/* MONTO */}
+                      <td className="py-3 px-4 text-right font-black text-sm text-gray-900 dark:text-white whitespace-nowrap">
+                        {formatPesos(inv.monto)}
+                      </td>
+
+                      {/* COBRADO / SALDO */}
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <div className="text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                          {formatPesos(cobradoReal)}
+                        </div>
+                        <div className={`text-[10px] font-semibold ${saldoReal > 0 ? 'text-red-500 dark:text-red-400' : 'text-gray-400'}`}>
+                          Saldo: {formatPesos(saldoReal)}
+                        </div>
+                      </td>
+
+                      {/* ESTATUS BADGE */}
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
+                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          inv.estatus === 'Pagada'
+                            ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                            : inv.estatus === 'Pendiente'
+                            ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 animate-pulse'
+                            : 'bg-red-100 dark:bg-red-950/70 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800 line-through'
+                        }`}>
+                          {inv.estatus === 'Pagada' && '🟢 PAGADA'}
+                          {inv.estatus === 'Pendiente' && '🟡 PENDIENTE'}
+                          {inv.estatus === 'Cancelada' && '🔴 CANCELADA'}
+                        </span>
+                      </td>
+
+                      {/* BOTÓN VER DESGLOSE DE ABONOS */}
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => handleEliminarFactura(inv.id, inv.folio)}
-                          className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-xs font-bold transition-colors cursor-pointer ml-1"
-                          title="Eliminar factura de la base de datos"
+                          onClick={() => setFacturaDetalleAbonos(inv)}
+                          className="bg-blue-50 dark:bg-blue-950/70 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold px-2 py-1 rounded-lg text-[10px] transition-colors cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                          title="Ver desglose detallado de Abonos 1 al 4 y fechas de cobro"
                         >
-                          🗑️
+                          <span>💳</span>
+                          <span>{abonosCount > 0 ? `${abonosCount} Abono(s)` : 'Ver Abonos'}</span>
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+
+                      {/* NOTAS */}
+                      <td className="py-3 px-4 text-gray-500 dark:text-gray-400 text-[11px] max-w-xs truncate" title={inv.notas || ''}>
+                        {inv.notas || '—'}
+                      </td>
+
+                      {/* BOTONES RÁPIDOS DE CAMBIO DE ESTATUS */}
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {inv.estatus !== 'Pagada' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCambiarEstatus(inv.id, 'Pagada')}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors shadow-xs cursor-pointer"
+                              title="Marcar como cobrada / pagada (actualiza Dashboard)"
+                            >
+                              ✓ Pagada
+                            </button>
+                          )}
+
+                          {inv.estatus !== 'Pendiente' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCambiarEstatus(inv.id, 'Pendiente')}
+                              className="bg-amber-500 hover:bg-amber-600 text-gray-900 px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors shadow-xs cursor-pointer"
+                              title="Marcar como pendiente de cobro"
+                            >
+                              ⏳ Pendiente
+                            </button>
+                          )}
+
+                          {inv.estatus !== 'Cancelada' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCambiarEstatus(inv.id, 'Cancelada')}
+                              className="bg-gray-200 dark:bg-gray-800 hover:bg-red-100 dark:hover:bg-red-950/70 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-300 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                              title="Cancelar factura"
+                            >
+                              ✕ Cancelar
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarFactura(inv.id, inv.folio)}
+                            className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-xs font-bold transition-colors cursor-pointer ml-1"
+                            title="Eliminar factura de la base de datos"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1770,6 +2492,450 @@ export default function FacturacionCobranza() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: CARGAR FACTURAS DESDE EXCEL */}
+      {/* ======================================================== */}
+      {modalImportarExcelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
+            
+            {/* Cabecera del Modal */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 dark:from-emerald-950/40 dark:via-gray-900 dark:to-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-xl shadow-sm">
+                  📥
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-gray-900 dark:text-white leading-tight">
+                    Cargar Facturas desde Excel
+                  </h3>
+                  <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                    Importa facturas masivamente con sus abonos y fechas de cobro
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setModalImportarExcelOpen(false);
+                  setFilasExcelPrevia([]);
+                  setArchivoExcelSeleccionado(null);
+                  setErrorImportarExcel(null);
+                }}
+                className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                aria-label="Cerrar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Contenido con scroll */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs">
+              
+              {/* GUÍA DE COLUMNAS REQUERIDAS Y BOTÓN DE PLANTILLA */}
+              <div className="bg-emerald-50/60 dark:bg-emerald-950/30 p-4 rounded-xl border border-emerald-200 dark:border-emerald-900/60">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2.5">
+                  <span className="font-black text-emerald-900 dark:text-emerald-300 text-xs flex items-center gap-1.5">
+                    <span>📋</span>
+                    <span>13 Columnas requeridas en la tabla de Excel:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleDescargarPlantillaExcel}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap self-start sm:self-auto"
+                    title="Descargar archivo Excel con los encabezados exactos y filas de ejemplo"
+                  >
+                    <span>📊</span>
+                    <span>Descargar Plantilla Oficial (.xlsx)</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Fecha factura',
+                    'Serie',
+                    'Número de factura',
+                    'Descripción',
+                    'Monto factura',
+                    'Abono 1',
+                    'Fecha abono 1',
+                    'Abono 2',
+                    'Fecha abono 2',
+                    'Abono 3',
+                    'Fecha abono 3',
+                    'Abono 4',
+                    'Fecha abono 4',
+                  ].map((col, idx) => (
+                    <span
+                      key={col}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-white dark:bg-gray-800 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 rounded-md font-bold text-[10px]"
+                    >
+                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400">#{idx + 1}</span>
+                      <span>{col}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* SELECTOR DE OBRA Y MODO DE IMPORTACIÓN */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl border border-gray-200 dark:border-gray-700">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Obra / Contrato Destino *
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={obraDestinoImportId}
+                      onChange={(e) => setObraDestinoImportId(e.target.value)}
+                      className="w-full p-2.5 pr-8 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-emerald-600 focus:outline-none transition-colors cursor-pointer"
+                    >
+                      {obras.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.nombre} ({o.cliente ? `${o.cliente} | ` : ''}Contrato: {o.contrato || 'S/N'})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-xs">
+                      ▼
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Modo de Importación *
+                  </label>
+                  <div className="flex gap-2">
+                    <label className={`flex-1 p-2 rounded-xl border cursor-pointer flex items-center gap-2 transition-colors ${
+                      modoImportacion === 'agregar'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-900 dark:text-emerald-200 font-bold'
+                        : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="modoImportacion"
+                        checked={modoImportacion === 'agregar'}
+                        onChange={() => setModoImportacion('agregar')}
+                        className="text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-[11px]">➕ Agregar a las actuales</span>
+                    </label>
+
+                    <label className={`flex-1 p-2 rounded-xl border cursor-pointer flex items-center gap-2 transition-colors ${
+                      modoImportacion === 'reemplazar'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-500 text-amber-900 dark:text-amber-200 font-bold'
+                        : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="modoImportacion"
+                        checked={modoImportacion === 'reemplazar'}
+                        onChange={() => setModoImportacion('reemplazar')}
+                        className="text-amber-600 focus:ring-amber-500"
+                      />
+                      <span className="text-[11px]">🔄 Reemplazar obra</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* ZONA DE CARGA DEL ARCHIVO (DROPZONE) */}
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleProcesarArchivoExcel(f);
+                  }}
+                />
+
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-emerald-400 dark:border-emerald-600 hover:border-emerald-600 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 p-6 rounded-2xl text-center cursor-pointer transition-all bg-gray-50/60 dark:bg-gray-800/40"
+                >
+                  <span className="text-4xl block mb-2">📁</span>
+                  <p className="text-sm font-black text-gray-800 dark:text-gray-200">
+                    {archivoExcelSeleccionado
+                      ? `Archivo: ${archivoExcelSeleccionado.name} (${(archivoExcelSeleccionado.size / 1024).toFixed(1)} KB)`
+                      : 'Haz clic aquí o arrastra tu archivo de Excel (.xlsx, .xls o .csv)'}
+                  </p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                    El sistema detectará automáticamente los importes, fechas y abonos 1 al 4.
+                  </p>
+                </div>
+              </div>
+
+              {/* MENSAJES DE ERROR */}
+              {errorImportarExcel && (
+                <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 p-3 rounded-xl text-xs font-semibold flex items-start gap-2">
+                  <span className="text-base shrink-0">⚠️</span>
+                  <span>{errorImportarExcel}</span>
+                </div>
+              )}
+
+              {/* SPINNER DE PROCESAMIENTO */}
+              {cargandoImportacion && (
+                <div className="text-center py-6 text-gray-500 dark:text-gray-400 flex flex-col items-center justify-center gap-2">
+                  <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs font-bold">Procesando y validando filas del archivo Excel...</span>
+                </div>
+              )}
+
+              {/* PREVISUALIZACIÓN DE FACTURAS LEÍDAS */}
+              {filasExcelPrevia.length > 0 && !cargandoImportacion && (
+                <div className="space-y-3">
+                  {/* RESUMEN DE IMPORTACIÓN */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="bg-blue-50 dark:bg-blue-950/50 p-3 rounded-xl border border-blue-200 dark:border-blue-900/60">
+                      <span className="block text-[10px] text-blue-700 dark:text-blue-300 uppercase font-black">Facturas</span>
+                      <span className="text-lg font-black text-blue-900 dark:text-blue-100">{filasExcelPrevia.length}</span>
+                    </div>
+
+                    <div className="bg-emerald-50 dark:bg-emerald-950/50 p-3 rounded-xl border border-emerald-200 dark:border-emerald-900/60">
+                      <span className="block text-[10px] text-emerald-700 dark:text-emerald-300 uppercase font-black">Total Facturado</span>
+                      <span className="text-sm sm:text-base font-black text-emerald-900 dark:text-emerald-100">
+                        {formatPesos(filasExcelPrevia.reduce((s, f) => s + f.monto, 0))}
+                      </span>
+                    </div>
+
+                    <div className="bg-teal-50 dark:bg-teal-950/50 p-3 rounded-xl border border-teal-200 dark:border-teal-900/60">
+                      <span className="block text-[10px] text-teal-700 dark:text-teal-300 uppercase font-black">Total en Abonos</span>
+                      <span className="text-sm sm:text-base font-black text-teal-900 dark:text-teal-100">
+                        {formatPesos(filasExcelPrevia.reduce((s, f) => s + (f.totalAbonado || 0), 0))}
+                      </span>
+                    </div>
+
+                    <div className="bg-amber-50 dark:bg-amber-950/50 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60">
+                      <span className="block text-[10px] text-amber-700 dark:text-amber-300 uppercase font-black">Saldo Pendiente</span>
+                      <span className="text-sm sm:text-base font-black text-amber-900 dark:text-amber-100">
+                        {formatPesos(filasExcelPrevia.reduce((s, f) => s + (f.saldoPendiente || 0), 0))}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* TABLA PREVIA DE FILAS */}
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                    <div className="p-2.5 bg-gray-100 dark:bg-gray-800 text-[11px] font-black text-gray-700 dark:text-gray-300 flex justify-between items-center">
+                      <span>Vista previa de registros detectados ({filasExcelPrevia.length} facturas)</span>
+                      <span className="text-[10px] text-gray-500">Mostrando primeras filas</span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto">
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="bg-gray-50 dark:bg-gray-800/80 sticky top-0 text-[10px] uppercase font-bold text-gray-500 border-b border-gray-200 dark:border-gray-700">
+                          <tr>
+                            <th className="p-2">Fecha</th>
+                            <th className="p-2">Folio (Serie-No)</th>
+                            <th className="p-2">Descripción</th>
+                            <th className="p-2 text-right">Monto</th>
+                            <th className="p-2 text-right">Abonos</th>
+                            <th className="p-2 text-center">Estatus</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                          {filasExcelPrevia.slice(0, 15).map((f, i) => (
+                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                              <td className="p-2 whitespace-nowrap">{f.fechaEmision}</td>
+                              <td className="p-2 font-bold whitespace-nowrap">{f.folio}</td>
+                              <td className="p-2 max-w-xs truncate">{f.descripcion}</td>
+                              <td className="p-2 text-right font-black whitespace-nowrap">{formatPesos(f.monto)}</td>
+                              <td className="p-2 text-right text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap">
+                                {formatPesos(f.totalAbonado || 0)}
+                              </td>
+                              <td className="p-2 text-center whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
+                                  f.estatus === 'Pagada'
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                                }`}>
+                                  {f.estatus}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Acciones del Modal */}
+            <div className="p-4 bg-gray-50 dark:bg-gray-800/60 border-t border-gray-200 dark:border-gray-800 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalImportarExcelOpen(false);
+                  setFilasExcelPrevia([]);
+                  setArchivoExcelSeleccionado(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              
+              <button
+                type="button"
+                onClick={handleConfirmarImportacionExcel}
+                disabled={filasExcelPrevia.length === 0}
+                className={`bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl text-xs transition-colors shadow-md flex items-center gap-2 cursor-pointer ${
+                  filasExcelPrevia.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <span>✅</span>
+                <span>Confirmar e Importar {filasExcelPrevia.length > 0 ? `(${filasExcelPrevia.length}) Facturas` : ''}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: DESGLOSE DETALLADO DE ABONOS (1 AL 4) */}
+      {/* ======================================================== */}
+      {facturaDetalleAbonos && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
+            
+            {/* Cabecera */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/40 dark:to-indigo-950/30 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-xl shadow-sm">
+                  💳
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-900 dark:text-white leading-tight">
+                    Desglose de Abonos — Folio: {facturaDetalleAbonos.folio}
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    {facturaDetalleAbonos.descripcion || facturaDetalleAbonos.concepto} ({facturaDetalleAbonos.fechaEmision})
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setFacturaDetalleAbonos(null)}
+                className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Contenido de Abonos */}
+            <div className="p-5 space-y-4 text-xs">
+              
+              {/* Tarjetas de los 4 Abonos */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* ABONO 1 */}
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 1</span>
+                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono1 || 'Sin fecha'}</span>
+                  </div>
+                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                    {formatPesos(Number(facturaDetalleAbonos.abono1) || 0)}
+                  </div>
+                </div>
+
+                {/* ABONO 2 */}
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 2</span>
+                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono2 || 'Sin fecha'}</span>
+                  </div>
+                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                    {formatPesos(Number(facturaDetalleAbonos.abono2) || 0)}
+                  </div>
+                </div>
+
+                {/* ABONO 3 */}
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 3</span>
+                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono3 || 'Sin fecha'}</span>
+                  </div>
+                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                    {formatPesos(Number(facturaDetalleAbonos.abono3) || 0)}
+                  </div>
+                </div>
+
+                {/* ABONO 4 */}
+                <div className="bg-gray-50 dark:bg-gray-800/70 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Abono 4</span>
+                    <span className="text-[10px] text-gray-500">{facturaDetalleAbonos.fechaAbono4 || 'Sin fecha'}</span>
+                  </div>
+                  <div className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                    {formatPesos(Number(facturaDetalleAbonos.abono4) || 0)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen Final de la Factura */}
+              <div className="bg-gray-100 dark:bg-gray-800/90 p-4 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                <div className="flex justify-between items-center text-gray-600 dark:text-gray-300">
+                  <span>Monto Total de la Factura:</span>
+                  <span className="font-black text-sm text-gray-900 dark:text-white">
+                    {formatPesos(facturaDetalleAbonos.monto)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-emerald-700 dark:text-emerald-400 font-bold">
+                  <span>Total Cobrado en Abonos:</span>
+                  <span className="text-sm">
+                    {formatPesos(
+                      Number(facturaDetalleAbonos.totalAbonado) > 0
+                        ? Number(facturaDetalleAbonos.totalAbonado)
+                        : facturaDetalleAbonos.estatus === 'Pagada'
+                        ? facturaDetalleAbonos.monto
+                        : 0
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <span className="font-black text-gray-800 dark:text-gray-200">Saldo Pendiente:</span>
+                  <span className="font-black text-sm text-red-600 dark:text-red-400">
+                    {formatPesos(
+                      Math.max(
+                        0,
+                        facturaDetalleAbonos.monto -
+                          (Number(facturaDetalleAbonos.totalAbonado) > 0
+                            ? Number(facturaDetalleAbonos.totalAbonado)
+                            : facturaDetalleAbonos.estatus === 'Pagada'
+                            ? facturaDetalleAbonos.monto
+                            : 0)
+                      )
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {facturaDetalleAbonos.notas && (
+                <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">
+                  <strong>Notas / Referencia:</strong> {facturaDetalleAbonos.notas}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-gray-50 dark:bg-gray-800/60 border-t border-gray-200 dark:border-gray-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFacturaDetalleAbonos(null)}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-black px-5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Entendido / Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
