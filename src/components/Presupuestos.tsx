@@ -1084,7 +1084,7 @@ export default function Presupuestos() {
             });
         };
 
-        // Imprimir / Exportar a PDF el presupuesto general (landscape)
+        // Imprimir / Exportar a PDF el presupuesto general (portrait - vertical)
         const imprimirPresupuestoPDF = () => {
             setFormatoImpresion('presupuesto');
             setTimeout(() => {
@@ -2214,7 +2214,7 @@ export default function Presupuestos() {
                         <style type="text/css" media="print">
                             {`
                                 @page { 
-                                    size: landscape; 
+                                    size: portrait; 
                                     margin: 8mm; 
                                 } 
                                 body { 
@@ -2232,53 +2232,80 @@ export default function Presupuestos() {
                                     border: none !important;
                                     overflow: hidden !important;
                                 }
-                                table {
+                                .tabla-presupuesto-print {
                                     page-break-inside: auto;
                                     border-collapse: collapse;
                                     width: 100%;
                                 }
-                                thead {
+                                .tabla-presupuesto-print thead {
                                     display: table-header-group;
                                 }
-                                tr {
+                                .tabla-presupuesto-print tr {
                                     page-break-inside: avoid;
                                     break-inside: avoid;
                                 }
-                                tfoot {
+                                .tabla-presupuesto-print tfoot {
                                     display: table-footer-group;
                                 }
                             `}
                         </style>
-                        <div className="flex justify-between items-start mb-4">
-                            <table className="text-xs">
+
+                        {/* ENCABEZADO METADATOS Y LOGO ALINEADOS */}
+                        <div className="w-full flex justify-between items-start mb-3" style={{ width: '100%' }}>
+                            <table style={{ width: 'auto', borderCollapse: 'collapse', border: 'none' }}>
                                 <tbody>
-                                    <tr><td className="font-bold pr-4">Presupuesto:</td><td className="font-bold text-base">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td></tr>
-                                    <tr><td className="font-bold pr-4">Subcontrato:</td><td>HERRERÍA</td></tr>
-                                    <tr><td className="font-bold pr-4">Promoción:</td><td>{presupuestoActivo.promocion}</td></tr>
-                                    <tr><td className="font-bold pr-4">Desarrollo:</td><td>{presupuestoActivo.desarrollo}</td></tr>
-                                    <tr><td className="font-bold pr-4">Ciudad:</td><td>{presupuestoActivo.ciudad}</td></tr>
-                                    <tr><td className="font-bold pr-4">Fecha:</td><td>{presupuestoActivo.fecha}</td></tr>
-                                    <tr><td className="font-bold pr-4">PROVEEDOR:</td><td className="font-bold text-lg">BENCH</td></tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Presupuesto:</td>
+                                        <td className="font-extrabold text-sm text-black">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Subcontrato:</td>
+                                        <td className="text-xs text-black uppercase">HERRERÍA</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Promoción:</td>
+                                        <td className="text-xs text-black">{presupuestoActivo.promocion || '-'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Desarrollo:</td>
+                                        <td className="text-xs text-black uppercase">{presupuestoActivo.desarrollo || '-'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Ciudad:</td>
+                                        <td className="text-xs text-black uppercase">{presupuestoActivo.ciudad || '-'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-bold pr-4 py-0.5 text-xs text-black whitespace-nowrap">Fecha:</td>
+                                        <td className="text-xs text-black">{presupuestoActivo.fecha || '-'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="font-extrabold pr-4 py-0.5 text-xs text-black whitespace-nowrap">PROVEEDOR:</td>
+                                        <td className="font-black text-sm text-black">BENCH</td>
+                                    </tr>
                                 </tbody>
                             </table>
-                            <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
+                            <div className="flex-shrink-0 text-right">
+                                <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain ml-auto" />
+                            </div>
                         </div>
-                        <table className="w-full text-center border-collapse border border-black text-[10px] table-fixed">
+
+                        {/* TABLA PRINCIPAL DEL PRESUPUESTO EN FORMATO VERTICAL */}
+                        <table className="tabla-presupuesto-print w-full text-center border-collapse border border-black text-[9px] table-fixed">
                             <thead className="bg-gray-200 font-bold">
                                 <tr>
                                     {presupuestoActivo.mostrarLote && (
-                                        <th className="border border-black p-1 w-[8%]">Lote</th>
+                                        <th className="border border-black px-1 py-1 w-[7%]">Lote</th>
                                     )}
-                                    <th className={`border border-black p-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
-                                    <th className={`border border-black p-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[32%]' : 'w-[35%]'}`}>Descripción</th>
-                                    <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Unidad</th>
+                                    <th className={`border border-black px-1 py-1 ${presupuestoActivo.mostrarLote ? 'w-[11%]' : 'w-[12%]'}`}>Código</th>
+                                    <th className={`border border-black px-1.5 py-1 text-left ${presupuestoActivo.mostrarLote ? 'w-[28%]' : 'w-[32%]'}`}>Descripción</th>
+                                    <th className="border border-black px-0.5 py-1 text-[7px] leading-tight font-bold w-[5%]">Unidad</th>
                                     <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Cantidad</th>
-                                    <th className={`border border-black px-0.5 py-1 text-[7px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[5%]' : 'w-[6%]'}`}>Módulos</th>
-                                    <th className="border border-black p-1 w-[7%] leading-tight">Total Piezas</th>
-                                    <th className="border border-black p-1 w-[7%]">P.U. Kg</th>
-                                    <th className="border border-black p-1 w-[8%] leading-tight">Kgs x Pieza</th>
-                                    <th className={`border border-black p-1 leading-tight ${presupuestoActivo.mostrarLote ? 'w-[10%]' : 'w-[11%]'}`}>P.U. x Pieza</th>
-                                    <th className="border border-black p-1 w-[12%]">Suma</th>
+                                    <th className="border border-black px-0.5 py-1 text-[7px] leading-tight font-bold w-[5%]">Módulos</th>
+                                    <th className="border border-black px-0.5 py-1 text-[7px] leading-tight font-bold w-[7%]">Total Piezas</th>
+                                    <th className="border border-black px-0.5 py-1 text-[8px] leading-tight font-bold w-[7%]">P.U. Kg</th>
+                                    <th className="border border-black px-0.5 py-1 text-[8px] leading-tight font-bold w-[7%]">Kgs x Pieza</th>
+                                    <th className="border border-black px-0.5 py-1 text-[8px] leading-tight font-bold w-[8%]">P.U. x Pieza</th>
+                                    <th className={`border border-black px-1 py-1 text-[8.5px] leading-tight font-bold ${presupuestoActivo.mostrarLote ? 'w-[10%]' : 'w-[11%]'}`}>Suma</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2289,24 +2316,24 @@ export default function Presupuestos() {
                                     return (
                                         <tr key={p.id}>
                                             {presupuestoActivo.mostrarLote && (
-                                                <td className="border border-black p-1 font-bold break-words">{p.lote || '-'}</td>
+                                                <td className="border border-black px-1 py-0.5 font-bold break-words">{p.lote || '-'}</td>
                                             )}
-                                            <td className="border border-black p-1 font-bold break-words">{p.codigo}</td>
-                                            <td className="border border-black p-1 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
-                                            <td className="border border-black p-1">{p.unidad}</td>
-                                            <td className="border border-black p-1">{p.cantidad}</td>
-                                            <td className="border border-black p-1">{p.modulos}</td>
-                                            <td className="border border-black p-1 font-bold">{pzas}</td>
-                                            <td className="border border-black p-1">${fin.precioKgCliente.toFixed(2)}</td>
-                                            <td className="border border-black p-1">{fin.kgTotales.toFixed(2)}</td>
-                                            <td className="border border-black p-1">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                            <td className="border border-black p-1 font-bold">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td className="border border-black px-1 py-0.5 font-bold break-words">{p.codigo}</td>
+                                            <td className="border border-black px-1.5 py-0.5 text-left break-words leading-tight">{p.descripcion}{pinturaDesc}</td>
+                                            <td className="border border-black px-0.5 py-0.5">{p.unidad}</td>
+                                            <td className="border border-black px-0.5 py-0.5">{p.cantidad}</td>
+                                            <td className="border border-black px-0.5 py-0.5">{p.modulos}</td>
+                                            <td className="border border-black px-0.5 py-0.5 font-bold">{pzas}</td>
+                                            <td className="border border-black px-0.5 py-0.5">${fin.precioKgCliente.toFixed(2)}</td>
+                                            <td className="border border-black px-0.5 py-0.5">{fin.kgTotales.toFixed(2)}</td>
+                                            <td className="border border-black px-0.5 py-0.5">${fin.precioUnitarioFinal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                            <td className="border border-black px-1 py-0.5 font-bold text-right">${(fin.precioUnitarioFinal * pzas).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                         </tr>
                                     );
                                 })}
                                 <tr>
-                                    <td colSpan={presupuestoActivo.mostrarLote ? 10 : 9} className="border border-black p-1 text-right font-bold uppercase">TOTAL:</td>
-                                    <td className="border border-black p-1 font-bold bg-gray-100">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td colSpan={presupuestoActivo.mostrarLote ? 10 : 9} className="border border-black px-2 py-1 text-right font-bold uppercase text-[10px]">TOTAL:</td>
+                                    <td className="border border-black px-1 py-1 font-black bg-gray-100 text-right text-[10px]">${granTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                 </tr>
                             </tbody>
                         </table>
