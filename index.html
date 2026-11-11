@@ -5,6 +5,18 @@
     <link rel="icon" type="image/jpeg" href="/logo.jpeg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bench App</title>
+    <style id="bench-print-page-orientation">
+      @page {
+        size: portrait;
+        margin: 8mm;
+      }
+      @media print {
+        @page {
+          size: portrait;
+          margin: 8mm;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

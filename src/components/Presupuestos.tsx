@@ -1084,20 +1084,48 @@ export default function Presupuestos() {
             });
         };
 
+        // Forzar orientación vertical a nivel documento (<head>) antes de abrir ventana de impresión
+        const forzarOrientacionVertical = (margenMm: number) => {
+            let el = document.getElementById('bench-print-page-orientation') as HTMLStyleElement | null;
+            if (!el) {
+                el = document.createElement('style');
+                el.id = 'bench-print-page-orientation';
+                document.head.appendChild(el);
+            }
+            el.textContent = `
+                @page {
+                    size: portrait;
+                    margin: ${margenMm}mm;
+                }
+                @media print {
+                    @page {
+                        size: portrait;
+                        margin: ${margenMm}mm;
+                    }
+                    html, body {
+                        width: 100% !important;
+                        overflow: visible !important;
+                    }
+                }
+            `;
+        };
+
         // Imprimir / Exportar a PDF el presupuesto general (portrait - vertical)
         const imprimirPresupuestoPDF = () => {
             setFormatoImpresion('presupuesto');
+            forzarOrientacionVertical(8);
             setTimeout(() => {
                 window.print();
-            }, 200);
+            }, 250);
         };
 
         // Imprimir / Exportar a PDF la lista de materiales a cotizar (portrait - 2 columnas)
         const imprimirMaterialesPDF = () => {
             setFormatoImpresion('materiales');
+            forzarOrientacionVertical(12);
             setTimeout(() => {
                 window.print();
-            }, 200);
+            }, 250);
         };
 
         return (
