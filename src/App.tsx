@@ -268,7 +268,7 @@ export default function App() {
       {/* ======================================================== */}
       {/* BARRA SUPERIOR PARA CELULAR / MÓVIL (VISIBLE SOLO EN < MD) */}
       {/* ======================================================== */}
-      <header className="md:hidden bg-[#0f141e] text-white px-3 py-2.5 flex items-center justify-between border-b border-gray-800 shadow-md z-30 flex-shrink-0">
+      <header className="md:hidden bg-[#0f141e] text-white px-3 py-2.5 flex items-center justify-between border-b border-gray-800 shadow-md z-30 flex-shrink-0 print:hidden">
         <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"
@@ -336,7 +336,7 @@ export default function App() {
       {sidebarOpen && (
         <div
           onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden transition-opacity"
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden transition-opacity print:hidden"
           aria-hidden="true"
         />
       )}
@@ -446,14 +446,13 @@ export default function App() {
       {/* ÁREA PRINCIPAL DE TRABAJO (MÓDULOS) */}
       {/* ======================================================== */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-3 sm:p-5 md:p-8 print:p-0 print:overflow-visible print:block print:h-auto print:max-h-none transition-colors">
-        <div className="max-w-7xl mx-auto w-full">
+        <div className="max-w-7xl mx-auto w-full print:max-w-none print:m-0 print:p-0 print:w-full">
           {activeView === 'obras' && <Obras />}
           {activeView === 'presupuestos' && <Presupuestos />}
           {activeView === 'facturacion' && <FacturacionCobranza usuarioEmail={usuarioActivo?.email || undefined} />}
           {activeView === 'almacen' && <Inventario />}
           {activeView === 'catalogo' && <ModelosHerreria />}
           {activeView === 'fabricacion' && <DestajosTaller />}
-          {activeView === 'presupuestos' && <Presupuestos />}
           {activeView === 'materiales' && <CatalogoMateriales />}
           {activeView === 'maquinaria' && <MachineryControl />}
           {activeView === 'reportes' && <Reportes />}
@@ -465,7 +464,7 @@ export default function App() {
       {/* MODAL: CAMBIAR CONTRASEÑA */}
       {/* ======================================================== */}
       {modalPasswordOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm print:hidden">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-gray-900 dark:text-gray-100 transition-colors">
             
             {/* Cabecera del Modal */}

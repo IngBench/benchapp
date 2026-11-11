@@ -12,3 +12,25 @@ html.dark body {
   background-color: #0b0f17;
   color: #f3f4f6;
 }
+
+@media print {
+  html,
+  html.dark,
+  body,
+  html.dark body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    color-scheme: light !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+
+  /* Ocultar cualquier elemento marcado como print:hidden */
+  .print\:hidden {
+    display: none !important;
+  }
+}

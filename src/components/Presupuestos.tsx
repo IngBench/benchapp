@@ -436,7 +436,7 @@ export default function Presupuestos() {
         }, 0);
 
         return (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
                 <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-6 border border-gray-200 my-8">
                     <div className="flex justify-between items-center border-b pb-3 mb-4">
                         <div>
@@ -1089,7 +1089,7 @@ export default function Presupuestos() {
             setFormatoImpresion('presupuesto');
             setTimeout(() => {
                 window.print();
-            }, 150);
+            }, 200);
         };
 
         // Imprimir / Exportar a PDF la lista de materiales a cotizar (portrait - 2 columnas)
@@ -1097,7 +1097,7 @@ export default function Presupuestos() {
             setFormatoImpresion('materiales');
             setTimeout(() => {
                 window.print();
-            }, 150);
+            }, 200);
         };
 
         return (
@@ -1183,7 +1183,7 @@ export default function Presupuestos() {
 
                 {/* MODAL PARA EDITAR DATOS GENERALES DEL PRESUPUESTO */}
                 {modalEditarPresupuesto && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
                         <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full p-6 border border-gray-200">
                             <div className="flex justify-between items-center border-b pb-3 mb-4">
                                 <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
@@ -1329,7 +1329,7 @@ export default function Presupuestos() {
 
                 {/* MODAL PARA COTIZAR MATERIALES CON PROVEEDORES */}
                 {modalCotizarMateriales && (
-                    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm print:hidden">
                         <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 border border-gray-200 my-8 max-h-[90vh] flex flex-col">
                             <div className="flex justify-between items-start border-b pb-3 mb-4">
                                 <div>
@@ -2108,12 +2108,12 @@ export default function Presupuestos() {
 
                 {/* FORMATO DE IMPRESIÓN (PDF) - FUERA DEL CONTENEDOR PRINT:HIDDEN PARA PERMITIR MÚLTIPLES PÁGINAS */}
                 {formatoImpresion === 'materiales' ? (
-                    <div className="hidden print:block w-full bg-white text-black p-[12mm]">
+                    <div className="hidden print:block w-full bg-white text-black">
                         <style type="text/css" media="print">
                             {`
                                 @page { 
                                     size: portrait; 
-                                    margin: 0; 
+                                    margin: 12mm; 
                                 } 
                                 body { 
                                     -webkit-print-color-adjust: exact; 
@@ -2123,6 +2123,7 @@ export default function Presupuestos() {
                                 table {
                                     page-break-inside: auto;
                                     border-collapse: collapse;
+                                    width: 100%;
                                 }
                                 thead {
                                     display: table-header-group;
@@ -2138,9 +2139,16 @@ export default function Presupuestos() {
                         </style>
                         {/* ENCABEZADO SOLICITUD DE MATERIALES */}
                         <div className="flex justify-between items-center mb-6 border-b-2 border-black pb-4">
-                            <h1 className="font-black text-2xl text-black tracking-tight uppercase">
-                                Solicitud de Cotización de Materiales
-                            </h1>
+                            <div>
+                                <h1 className="font-black text-2xl text-black tracking-tight uppercase">
+                                    Solicitud de Cotización de Materiales
+                                </h1>
+                                <p className="text-xs text-gray-700 font-bold mt-1">
+                                    Presupuesto: <span className="uppercase">{presupuestoActivo.nombre || presupuestoActivo.desarrollo}</span>
+                                    {presupuestoActivo.cliente && ` • Cliente: ${presupuestoActivo.cliente}`}
+                                    {presupuestoActivo.fecha && ` • Fecha: ${presupuestoActivo.fecha}`}
+                                </p>
+                            </div>
                             <img src="/logo.jpeg" alt="Bench" className="h-16 object-contain" />
                         </div>
 
@@ -2192,11 +2200,11 @@ export default function Presupuestos() {
                         </table>
                     </div>
                 ) : (
-                    <div className="hidden print:block w-full bg-white text-black p-2">
+                    <div className="hidden print:block w-full bg-white text-black">
                         <style type="text/css" media="print">
                             {`
                                 @page { 
-                                    size: portrait; 
+                                    size: landscape; 
                                     margin: 8mm; 
                                 } 
                                 body { 
@@ -2207,6 +2215,7 @@ export default function Presupuestos() {
                                 table {
                                     page-break-inside: auto;
                                     border-collapse: collapse;
+                                    width: 100%;
                                 }
                                 thead {
                                     display: table-header-group;
@@ -2297,7 +2306,7 @@ export default function Presupuestos() {
     // VISTA PRINCIPAL: LISTADO Y ALTA DE PRESUPUESTOS
     // ==========================================
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 print:hidden">
             {/* PANEL PARA CREAR Y GUARDAR UN NUEVO PRESUPUESTO */}
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                 <div className="flex justify-between items-center mb-4 border-b pb-3">
@@ -2441,7 +2450,7 @@ export default function Presupuestos() {
 
             {/* MODAL PARA EDITAR DATOS GENERALES (DESDE EL LISTADO) */}
             {modalEditarPresupuesto && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
                     <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full p-6 border border-gray-200">
                         <div className="flex justify-between items-center border-b pb-3 mb-4">
                             <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
