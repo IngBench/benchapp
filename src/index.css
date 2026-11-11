@@ -2,7 +2,7 @@
 
 @page {
   size: portrait;
-  margin: 8mm;
+  margin: 0;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -21,7 +21,7 @@ html.dark body {
 @media print {
   @page {
     size: portrait;
-    margin: 8mm;
+    margin: 0;
   }
 
   html,

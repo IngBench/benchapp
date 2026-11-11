@@ -1084,8 +1084,8 @@ export default function Presupuestos() {
             });
         };
 
-        // Forzar orientación vertical a nivel documento (<head>) antes de abrir ventana de impresión
-        const forzarOrientacionVertical = (margenMm: number) => {
+        // Forzar orientación vertical a nivel documento (<head>) y eliminar márgenes de navegador (quita URL y fecha)
+        const forzarOrientacionVertical = () => {
             let el = document.getElementById('bench-print-page-orientation') as HTMLStyleElement | null;
             if (!el) {
                 el = document.createElement('style');
@@ -1095,15 +1095,17 @@ export default function Presupuestos() {
             el.textContent = `
                 @page {
                     size: portrait;
-                    margin: ${margenMm}mm;
+                    margin: 0;
                 }
                 @media print {
                     @page {
                         size: portrait;
-                        margin: ${margenMm}mm;
+                        margin: 0;
                     }
                     html, body {
                         width: 100% !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
                         overflow: visible !important;
                     }
                 }
@@ -1113,7 +1115,7 @@ export default function Presupuestos() {
         // Imprimir / Exportar a PDF el presupuesto general (portrait - vertical)
         const imprimirPresupuestoPDF = () => {
             setFormatoImpresion('presupuesto');
-            forzarOrientacionVertical(8);
+            forzarOrientacionVertical();
             setTimeout(() => {
                 window.print();
             }, 250);
@@ -1122,7 +1124,7 @@ export default function Presupuestos() {
         // Imprimir / Exportar a PDF la lista de materiales a cotizar (portrait - 2 columnas)
         const imprimirMaterialesPDF = () => {
             setFormatoImpresion('materiales');
-            forzarOrientacionVertical(12);
+            forzarOrientacionVertical();
             setTimeout(() => {
                 window.print();
             }, 250);
@@ -2136,12 +2138,12 @@ export default function Presupuestos() {
 
                 {/* FORMATO DE IMPRESIÓN (PDF) - FUERA DEL CONTENEDOR PRINT:HIDDEN PARA PERMITIR MÚLTIPLES PÁGINAS */}
                 {formatoImpresion === 'materiales' ? (
-                    <div className="hidden print:block w-full bg-white text-black">
+                    <div className="hidden print:block w-full bg-white text-black p-[10mm] box-border">
                         <style type="text/css" media="print">
                             {`
                                 @page { 
                                     size: portrait; 
-                                    margin: 12mm; 
+                                    margin: 0; 
                                 } 
                                 body { 
                                     -webkit-print-color-adjust: exact; 
@@ -2238,12 +2240,12 @@ export default function Presupuestos() {
                         </table>
                     </div>
                 ) : (
-                    <div className="hidden print:block w-full bg-white text-black">
+                    <div className="hidden print:block w-full bg-white text-black p-[8mm] box-border">
                         <style type="text/css" media="print">
                             {`
                                 @page { 
                                     size: portrait; 
-                                    margin: 8mm; 
+                                    margin: 0; 
                                 } 
                                 body { 
                                     -webkit-print-color-adjust: exact; 
