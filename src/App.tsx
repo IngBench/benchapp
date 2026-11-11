@@ -268,7 +268,10 @@ export default function App() {
       {/* ======================================================== */}
       {/* BARRA SUPERIOR PARA CELULAR / MÓVIL (VISIBLE SOLO EN < MD) */}
       {/* ======================================================== */}
-      <header className="md:hidden bg-[#0f141e] text-white px-3 py-2.5 flex items-center justify-between border-b border-gray-800 shadow-md z-30 flex-shrink-0 print:hidden">
+      <header
+        id="bench-mobile-header"
+        className="md:hidden bg-[#0f141e] text-white px-3 py-2.5 flex items-center justify-between border-b border-gray-800 shadow-md z-30 flex-shrink-0 print:hidden print:!hidden"
+      >
         <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"

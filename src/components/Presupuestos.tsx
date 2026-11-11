@@ -2120,6 +2120,16 @@ export default function Presupuestos() {
                                     print-color-adjust: exact; 
                                     background: white !important;
                                 }
+                                header, aside, nav, #bench-mobile-header, .print\\:hidden, .print\\:\\!hidden {
+                                    display: none !important;
+                                    visibility: hidden !important;
+                                    height: 0 !important;
+                                    max-height: 0 !important;
+                                    margin: 0 !important;
+                                    padding: 0 !important;
+                                    border: none !important;
+                                    overflow: hidden !important;
+                                }
                                 table {
                                     page-break-inside: auto;
                                     border-collapse: collapse;
@@ -2211,6 +2221,16 @@ export default function Presupuestos() {
                                     -webkit-print-color-adjust: exact; 
                                     print-color-adjust: exact; 
                                     background: white !important;
+                                }
+                                header, aside, nav, #bench-mobile-header, .print\\:hidden, .print\\:\\!hidden {
+                                    display: none !important;
+                                    visibility: hidden !important;
+                                    height: 0 !important;
+                                    max-height: 0 !important;
+                                    margin: 0 !important;
+                                    padding: 0 !important;
+                                    border: none !important;
+                                    overflow: hidden !important;
                                 }
                                 table {
                                     page-break-inside: auto;

@@ -29,8 +29,20 @@ html.dark body {
     min-height: auto !important;
   }
 
-  /* Ocultar cualquier elemento marcado como print:hidden */
-  .print\:hidden {
+  /* Ocultar barra superior, sidebar, navegacion y controles en impresion */
+  header,
+  aside,
+  nav,
+  #bench-mobile-header,
+  .print\:hidden,
+  .print\:\!hidden {
     display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    max-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
   }
 }
